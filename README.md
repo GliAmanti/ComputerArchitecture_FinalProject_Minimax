@@ -111,3 +111,8 @@ Comments and PRs always welcome.
 
 Graeme Smecher
 gsmecher@threespeedlogic.com
+
+## Verilog Port
+
+This repo also contains a Verilog port of the original VHDL code. It runs the same CI as
+the original VHDL implementation, and should be equivalent.

@@ -1,0 +1,41 @@
+# Script adapted from https://github.com/YosysHQ/yosys/issues/302#issuecomment-276019637
+
+read_verilog base-minimax.v
+prep -flatten -top minimax
+splitnets -ports;;
+design -stash reference
+read_verilog minimax.v
+prep -flatten -top minimax
+splitnets -ports;;
+design -stash rework
+design -copy-from reference -as reference minimax
+design -copy-from rework -as rework minimax
+equiv_make reference rework equiv
+prep -flatten -top equiv
+
+opt_clean -purge
+#show -prefix equiv-prep -colors 1 -stretch
+
+## method 1
+opt -full
+equiv_simple -seq 5
+equiv_induct -seq 5
+equiv_status -assert
+
+## method 2
+#equiv_struct -icells t:$adff t:$equiv
+#equiv_simple -seq 5
+#equiv_induct -seq 5
+#equiv_status -assert
+
+## method 3
+#techmap -map +/adff2dff.v
+#equiv_simple -seq 5
+#equiv_induct -seq 5
+#equiv_status -assert
+
+## method 4
+#clk2fflogic
+#equiv_simple -seq 10
+#equiv_induct -seq 10
+#equiv_status -assert

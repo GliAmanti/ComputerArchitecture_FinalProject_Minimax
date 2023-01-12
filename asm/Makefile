@@ -1,5 +1,7 @@
-CROSS_CC?=riscv64-unknown-elf-gcc
-CROSS_OBJCOPY?=riscv64-unknown-elf-objcopy
+PYTHON ?= python3
+CROSS_COMPILE ?= riscv64-unknown-elf-
+CROSS_CC ?= $(CROSS_COMPILE)gcc
+CROSS_OBJCOPY ?= $(CROSS_COMPILE)objcopy
 
 CFLAGS := -march=rv32ic -mabi=ilp32	\
 	  -fno-pic -nostartfiles -nostdlib
@@ -17,7 +19,7 @@ clean:
 blink.mem: blink.o microcode.o
 	$(CROSS_CC) $(LDFLAGS) -T bare.ld -o $@.elf $^
 	$(CROSS_OBJCOPY) -O binary $@.elf $@.bin
-	./bin2mem $@.bin $@
+	$(PYTHON) ./bin2mem $@.bin $@
 
 # Assembler
 %.o: %.S
