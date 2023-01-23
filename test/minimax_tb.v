@@ -40,12 +40,17 @@
 `define TRACE 1'b0
 `endif
 
+`ifndef OUTPUT_FILENAME
+`define OUTPUT_FILENAME "/dev/stdout"
+`endif
+
 module minimax_tb;
     parameter MAXTICKS = `MAXTICKS;
     parameter ROM_SIZE = `ROM_SIZE;
     parameter PC_BITS = $clog2(ROM_SIZE);
     parameter MICROCODE_BASE = `MICROCODE_BASE;
     parameter ROM_FILENAME = `ROM_FILENAME;
+    parameter OUTPUT_FILENAME = `OUTPUT_FILENAME;
     parameter TRACE = `TRACE;
 
     reg clk;
@@ -133,29 +138,29 @@ module minimax_tb;
         reset <= 1'b0;
     end
 
+    integer output_fd;
     initial begin
+        output_fd = $fopen(OUTPUT_FILENAME, "w");
         ticks <= 0;
     end
 
-    // Capture test exit conditions - timeout or quit
+    // Capture test outputs
     always @(posedge clk)
     begin
         // Track ticks counter and bail if we took too long
         ticks <= ticks + 1;
         if (MAXTICKS != -1 && ticks >= MAXTICKS) begin
-            $display("FAIL: Exceeded MAXTICKS of %0d", MAXTICKS);
+            $fdisplay(output_fd, "FAIL: Exceeded MAXTICKS of %0d", MAXTICKS);
             $finish_and_return(1);
         end
 
-        // Capture writes to address 0xfffffffc and use these as "quit" values
-        if (wmask == 4'b1111 && addr == 32'hfffffffc) begin
-            if (~|wdata) begin
-                $display("SUCCESS: returned 0.");
-                $finish_and_return(0);
-            end else begin
-                $display("FAIL: returned %0d", wdata);
-                $finish_and_return(1);
-            end
+        if (&wmask && addr==32'hfffffff8) begin
+            // Capture writes to 0xfffffff8 and dump them in hex to stdout
+            $fdisplay(output_fd, "%x", wdata);
+        end
+        else if (&wmask && addr==32'hfffffffc) begin
+            // Capture writes to address 0xfffffffc and use these as "quit" values
+            $finish_and_return(wdata);
         end
     end
 
