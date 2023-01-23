@@ -362,38 +362,39 @@ op32_entry:
 	c.add ra, x8
 	c.jr ra
 
-	c.j table0	/* 0 */
-	c.j .		/* 1 */
-	c.j .		/* 2 */
-	c.j .		/* 3 */
-	c.j table4	/* 4 */
-	c.j auipc	/* 5 */
-	c.j .		/* 6 */
-	c.j .		/* 7 */
-	c.j table8	/* 8 */
-	c.j .		/* 9 */
-	c.j .		/* a */
-	c.j .		/* b */
-	c.j tablec	/* c */
-	c.j lui		/* d */
-	c.j .		/* e */
-	c.j .		/* f */
-	c.j .		/* 10 */
-	c.j .		/* 11 */
-	c.j .		/* 12 */
-	c.j .		/* 13 */
-	c.j .		/* 14 */
-	c.j .		/* 15 */
-	c.j .		/* 16 */
-	c.j .		/* 17 */
-	c.j table18	/* 18 */
-	c.j jalr	/* 19 */
-	c.j .		/* 1a */
-	c.j jal		/* 1b */
-	c.j .		/* 1c */
-	c.j .		/* 1d */
-	c.j .		/* 1e */
-	c.j .		/* 1f */
+	/* Names per Table 24.1 */
+	c.j table0	/* 0: LOAD */
+	c.j .		/* 1: LOAD-FP */
+	c.j .		/* 2: custom-0 */
+	c.j table3	/* 3: MISC-MEM */
+	c.j table4	/* 4: OP-IMM */
+	c.j auipc	/* 5: AUIPC */
+	c.j .		/* 6: OP-IMM-32 */
+	c.j .		/* 7: 48b */
+	c.j table8	/* 8: STORE */
+	c.j .		/* 9: STORE-FP */
+	c.j .		/* a: custom-1 */
+	c.j .		/* b: AMO */
+	c.j tablec	/* c: OP */
+	c.j lui		/* d: LUI */
+	c.j .		/* e: OP-32 */
+	c.j .		/* f: 64b */
+	c.j .		/* 10: MADD */
+	c.j .		/* 11: MSUB */
+	c.j .		/* 12: NMSUB */
+	c.j .		/* 13: NMADD */
+	c.j .		/* 14: OP-FP */
+	c.j .		/* 15: reserved */
+	c.j .		/* 16: custom-2/rv128 */
+	c.j .		/* 17: 48b */
+	c.j table18	/* 18: BRANCH */
+	c.j jalr	/* 19: JALR */
+	c.j .		/* 1a: reserved */
+	c.j jal		/* 1b: JAL */
+	c.j .		/* 1c: SYSTEM */
+	c.j .		/* 1d: reserved */
+	c.j .		/* 1e: custom-3/rv128 */
+	c.j .		/* 1f: >=80b */
 
 table0:
 	c.jal .+2
@@ -404,11 +405,26 @@ table0:
 	c.j lb	/* 0.0: LB */
 	c.j lh	/* 0.1: LH */
 	c.j lw	/* 0.2: LW */
-	c.j .	/* 0.3: FENCE */
+	c.j .	/* 0.3: */
 	c.j lbu	/* 0.4: LBU */
 	c.j lhu	/* 0.5: LHU*/
 	c.j .	/* 0.6: */
 	c.j .	/* 0.7: */
+
+table3:
+	c.jal .+2
+	c.addi ra, 6 /* offset to table base */
+	c.add ra, x16
+	c.jr ra
+
+	c.j ret_rv32	/* 3.0: FENCE is a noop */
+	c.j .	/* 3.1: */
+	c.j .	/* 3.2: */
+	c.j .	/* 3.3: */
+	c.j .	/* 3.4: */
+	c.j .	/* 3.5: */
+	c.j .	/* 3.6: */
+	c.j .	/* 3.7: */
 
 table4:
 	c.jal .+2
