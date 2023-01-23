@@ -10,16 +10,24 @@ LDFLAGS := -march=rv32ic -mabi=ilp32	\
 	   -fno-pic -Wl,--no-relax	\
 	   -nostartfiles -nostdlib
 
-default: blink.mem
+default: blink.hex microcode.hex
 
 clean:
-	rm -rf *.o blink.mem*
+	rm -rf *.o *.hex*
 
-# .mem generator
-blink.mem: blink.o microcode.o
-	$(CROSS_CC) $(LDFLAGS) -T bare.ld -o $@.elf $^
-	$(CROSS_OBJCOPY) -O binary $@.elf $@.bin
-	$(PYTHON) ./bin2mem $@.bin $@
+# Linker
+%.elf: %.o
+	$(CROSS_CC) $(LDFLAGS) -T bare.ld -o $@ $<
+
+%.bin: %.elf
+	$(CROSS_OBJCOPY) -O binary $< $@
+
+# Special case: microcode doesn't embed itself
+microcode.hex: microcode.bin
+	$(PYTHON) ./bin2hex $< $@
+
+%.hex: %.bin microcode.hex
+	$(PYTHON) ./bin2hex --microcode=microcode.hex $< $@
 
 # Assembler
 %.o: %.S

@@ -1,2 +1,3 @@
-blink.mem*
 *.o
+*.bin
+*.elf

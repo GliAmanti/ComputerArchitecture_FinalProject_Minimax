@@ -37,7 +37,7 @@ begin
 		CASCADE_HEIGHT => 0,
 		CLOCKING_MODE => "common_clock",
 		ECC_MODE => "no_ecc",
-		MEMORY_INIT_FILE => "blink.mem",
+		MEMORY_INIT_FILE => "blink.hex",
 		MEMORY_INIT_PARAM => "0",
 		MEMORY_OPTIMIZATION => "true",
 		MEMORY_PRIMITIVE => "block",

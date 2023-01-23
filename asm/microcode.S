@@ -47,7 +47,7 @@
  * All other (microcode) registers are currently unused.
  */
 
-.section .mctext
+.section .text
 
 microcode_entry:
 	/* Trapping stores PC+2 in RA. Correct it. */

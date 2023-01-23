@@ -6,7 +6,7 @@
 // This testbench contains:
 //
 // * A minimax core,
-// * A 4kB dual-port RAM connected to both instruction and data buses, and
+// * A dual-port RAM connected to both instruction and data buses, and
 // * Enough "peripheral" to halt the simulation on completion.
 //
 
@@ -18,8 +18,12 @@
 `define ROM_FILENAME "../asm/blink.mem"
 `endif
 
-`ifndef MICROCODE_FILENAME
-`define MICROCODE_FILENAME "../asm/microcode.mem"
+`ifndef MICROCODE_BASE
+`define MICROCODE_BASE 32'h00000800
+`endif
+
+`ifndef ROM_SIZE
+`define ROM_SIZE 32'h1000 /* bytes */
 `endif
 
 `ifndef VCD_FILENAME
@@ -38,17 +42,17 @@
 
 module minimax_tb;
     parameter MAXTICKS = `MAXTICKS;
-    parameter PC_BITS = 13;
-    parameter UC_BASE = 32'h0000800;
+    parameter ROM_SIZE = `ROM_SIZE;
+    parameter PC_BITS = $clog2(ROM_SIZE);
+    parameter MICROCODE_BASE = `MICROCODE_BASE;
     parameter ROM_FILENAME = `ROM_FILENAME;
-    parameter MICROCODE_FILENAME = `MICROCODE_FILENAME;
     parameter TRACE = `TRACE;
 
     reg clk;
     reg reset;
 
     reg [31:0] ticks;
-    reg [15:0] rom_array [0:8191];
+    reg [15:0] rom_array [0:ROM_SIZE/2-1];
 
     // Run clock at 10 ns
     always #10 clk <= (clk === 1'b0);
@@ -62,12 +66,9 @@ module minimax_tb;
         $dumpfile(`VCD_FILENAME);
         $dumpvars(0, minimax_tb);
 
-        for (i = 0; i < 8192; i = i + 1) rom_array[i] = 16'b0;
+        for (i = 0; i < ROM_SIZE/2; i = i + 1) rom_array[i] = 16'b0;
 
         $readmemh(ROM_FILENAME, rom_array);
-        `ifndef SKIP_MICROCODE
-        $readmemh(MICROCODE_FILENAME, rom_array, UC_BASE);
-        `endif
 
         forever begin
             @(posedge clk);
@@ -84,7 +85,6 @@ module minimax_tb;
     reg [31:0] rdata;
     wire [3:0] wmask;
     wire rreq;
-    // reg [31:0] i32;
     wire [31:0] i32;
 
     assign rom_window = rom_array[ticks];
@@ -113,7 +113,7 @@ module minimax_tb;
     minimax #(
         .TRACE(TRACE),
         .PC_BITS(PC_BITS),
-        .UC_BASE(UC_BASE)
+        .UC_BASE(MICROCODE_BASE)
     ) dut (
         .clk(clk),
         .reset(reset),
