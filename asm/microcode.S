@@ -709,16 +709,9 @@ sltiu:
 bge:
 	c.mv x8, x18
 	c.mv x9, x20
-	c.sub x8, x9
 
-	/* Form 0x80000 */
-	c.lui x9, 0x10
-	c.slli x9, 1
-	c.slli x9, 1
-	c.slli x9, 1
-
-	c.and x8, x9
-	c.bnez x8, 1f /* branch not taken */
+	c.jal slt_func
+	c.bnez x8, 1f
 
 	c.jal resolve_imm1
 	c.add x8, x3
