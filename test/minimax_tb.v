@@ -88,29 +88,26 @@ module minimax_tb;
     reg [31:0] rdata;
     wire [3:0] wmask;
     wire rreq;
-    wire [31:0] i32;
 
     assign rom_window = rom_array[ticks];
-    assign i32 = {rom_array[{inst_addr[PC_BITS-1:2], 1'b1}], rom_array[{inst_addr[PC_BITS-1:2], 1'b0}]};
 
     always @(posedge clk) begin
 
         rdata <= {rom_array[{addr[PC_BITS-1:2], 1'b1}], rom_array[{addr[PC_BITS-1:2], 1'b0}]};
-
-        if (inst_addr[1])
-            inst_lat <= i32[31:16];
-        else
-            inst_lat <= i32[15:0];
+        inst_lat <= rom_array[inst_addr[PC_BITS-1:1]];
 
         if (inst_regce) begin
             inst_reg <= inst_lat;
         end
 
-        if (wmask == 4'hf) begin
-            rom_array[addr[PC_BITS-1:1]+1] <= wdata[31:16];
-            rom_array[addr[PC_BITS-1:1]] <= wdata[15:0];
-        end
-
+	if (wmask[3])
+	    rom_array[addr[PC_BITS-1:1]+1][15:8] = wdata[31:24];
+        if (wmask[2])
+	    rom_array[addr[PC_BITS-1:1]+1][7:0] = wdata[23:16];
+	if (wmask[1])
+	    rom_array[addr[PC_BITS-1:1]][15:8] = wdata[15:8];
+        if (wmask[0])
+	    rom_array[addr[PC_BITS-1:1]][7:0] = wdata[7:0];
     end
 
     minimax #(

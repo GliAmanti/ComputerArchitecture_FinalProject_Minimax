@@ -1,15 +1,38 @@
+/*
+ * Minimax: microcoded RISC-V
+ *
+ * (c) 2022-2023 Three-Speed Logic, Inc. <gsmecher@threespeedlogic.com>
+ * (c) 2022-2023 Sean Cross <sean@xobs.io>
+ *
+ * RISC-V's compressed instruction (RVC) extension is intended as an add-on to
+ * the regular, 32-bit instruction set, not a replacement or competitor. Its
+ * designers designed RVC instructions to be expanded into regular 32-bit RV32I
+ * equivalents via a pre-decoder.
+ *
+ * What happens if we *explicitly* architect a RISC-V CPU to execute RVC
+ * instructions, and "mop up" any RV32I instructions that aren't convenient via
+ * a microcode layer? What architectural optimizations are unlocked as a result?
+ *
+ * "Minimax" is an experimental RISC-V implementation intended to establish if
+ * an RVC-optimized CPU is, in practice, any simpler than an ordinary RV32I
+ * core with pre-decoder. While it passes a modest test suite, you should not
+ * use it without caution. (There are a large number of excellent, open source,
+ * "little" RISC-V implementations you should probably use reach for first.)
+ */
+
+`default_nettype none
 
 module minimax (
-   input  clk,
-   input  reset,
-   input  [15:0] inst,
-   input  [31:0] rdata,
-   output [PC_BITS-1:0] inst_addr,
+   input wire clk,
+   input wire reset,
+   input wire [15:0] inst,
+   input wire [31:0] rdata,
+   output wire[PC_BITS-1:0] inst_addr,
    output reg inst_regce,
-   output [31:0] addr,
-   output [31:0] wdata,
-   output [3:0] wmask,
-   output rreq);
+   output wire [31:0] addr,
+   output wire [31:0] wdata,
+   output wire [3:0] wmask,
+   output wire rreq);
 
   // Parameters are currently unimplemented
   parameter PC_BITS = 12;
@@ -37,142 +60,99 @@ module minimax (
   wire [PC_BITS-1:1] aguX, aguA, aguB;
 
   // Track bubbles and execution inhibits through the pipeline.
-  wire bubble;
   reg bubble1 = 1'b1, bubble2 = 1'b1;
-  wire branch_taken;
   reg microcode = 1'b0;
-  wire trap, op16_trap, op32_trap;
+  wire bubble = bubble1 | bubble2;
 
-  // Writeback and deferred writeback strobes
-  wire wb;
+  // Deferred writeback address
   reg [4:0] dra = 5'b0;
 
-  // Opcode masks for 16-bit instructions
-  wire [15:0] inst_type_masked;
-  wire [15:0] inst_type_masked_i16;
-  wire [15:0] inst_type_masked_sr;
-  wire [15:0] inst_type_masked_and;
-  wire [15:0] inst_type_masked_op;
-  wire [15:0] inst_type_masked_j;
-  wire [15:0] inst_type_masked_mj;
-
-  // Strobes for 16-bit instructions
-  wire op16;
-  wire op16_addi4spn;
-  wire op16_lw;
+  // Registers for multi-cycle 16-bit instructions
   reg dly16_lw = 1'b0;
-  wire op16_sw;
-
-  wire op16_addi;
-  wire op16_jal;
-  wire op16_li;
-  wire op16_addi16sp;
-  wire op16_lui;
-
-  wire op16_srli;
-  wire op16_srai;
-  wire op16_andi;
-  wire op16_sub;
-  wire op16_xor;
-  wire op16_or;
-  wire op16_and;
-  wire op16_j;
-  wire op16_beqz;
-  wire op16_bnez;
-
-  wire op16_slli;
-  wire op16_lwsp;
   reg dly16_lwsp = 1'b0;
-  wire op16_jr;
-  wire op16_mv;
-
-  wire op16_ebreak;
-  wire op16_jalr;
-  wire op16_add;
-  wire op16_swsp;
-
-  wire op16_slli_setrd;
   reg dly16_slli_setrd = 1'b0;
-  wire op16_slli_setrs;
   reg dly16_slli_setrs = 1'b0;
-  wire op16_slli_thunk;
 
-  // Strobes for 32-bit instructions
-  wire op32;
-
-  assign inst_type_masked     = inst & 16'b111_0_00000_00000_11;
-  assign inst_type_masked_i16 = inst & 16'b111_0_11111_00000_11;
-  assign inst_type_masked_sr  = inst & 16'b111_1_11000_11111_11;
-  assign inst_type_masked_and = inst & 16'b111_0_11000_00000_11;
-  assign inst_type_masked_op  = inst & 16'b111_0_11000_11000_11;
-  assign inst_type_masked_j   = inst & 16'b111_1_00000_11111_11;
-  assign inst_type_masked_mj  = inst & 16'b111_1_00000_00000_11;
+  // Opcode masks for 16-bit instructions
+  wire [15:0] inst_type_masked     = inst & 16'b111_0_00000_00000_11;
+  wire [15:0] inst_type_masked_zcb = inst & 16'b111_1_11000_00000_11;
+  wire [15:0] inst_type_masked_i16 = inst & 16'b111_0_11111_00000_11;
+  wire [15:0] inst_type_masked_sr  = inst & 16'b111_1_11000_11111_11;
+  wire [15:0] inst_type_masked_and = inst & 16'b111_0_11000_00000_11;
+  wire [15:0] inst_type_masked_op  = inst & 16'b111_0_11000_11000_11;
+  wire [15:0] inst_type_masked_j   = inst & 16'b111_1_00000_11111_11;
+  wire [15:0] inst_type_masked_mj  = inst & 16'b111_1_00000_00000_11;
 
   // From 16.8 (RVC Instruction Set Listings)
-  assign op16_addi4spn   = (inst_type_masked     == 16'b000_0_00000_00000_00) & ~bubble;
-  assign op16_lw         = (inst_type_masked     == 16'b010_0_00000_00000_00) & ~bubble;
-  assign op16_sw         = (inst_type_masked     == 16'b110_0_00000_00000_00) & ~bubble;
-  
-  assign op16_addi       = (inst_type_masked     == 16'b000_0_00000_00000_01) & ~bubble;
-  assign op16_jal        = (inst_type_masked     == 16'b001_0_00000_00000_01) & ~bubble;
-  assign op16_li         = (inst_type_masked     == 16'b010_0_00000_00000_01) & ~bubble;
-  assign op16_addi16sp   = (inst_type_masked_i16 == 16'b011_0_00010_00000_01) & ~bubble;
-  assign op16_lui        = (inst_type_masked     == 16'b011_0_00000_00000_01) & ~bubble & ~op16_addi16sp;
-      
-  assign op16_srli       = (inst_type_masked_sr  == 16'b100_0_00000_00001_01) & ~bubble;
-  assign op16_srai       = (inst_type_masked_sr  == 16'b100_0_01000_00001_01) & ~bubble;
-  assign op16_andi       = (inst_type_masked_and == 16'b100_0_10000_00000_01) & ~bubble;
-  assign op16_sub        = (inst_type_masked_op  == 16'b100_0_11000_00000_01) & ~bubble;
-  assign op16_xor        = (inst_type_masked_op  == 16'b100_0_11000_01000_01) & ~bubble;
-  assign op16_or         = (inst_type_masked_op  == 16'b100_0_11000_10000_01) & ~bubble;
-  assign op16_and        = (inst_type_masked_op  == 16'b100_0_11000_11000_01) & ~bubble;
-  assign op16_j          = (inst_type_masked     == 16'b101_0_00000_00000_01) & ~bubble;
-  assign op16_beqz       = (inst_type_masked     == 16'b110_0_00000_00000_01) & ~bubble;
-  assign op16_bnez       = (inst_type_masked     == 16'b111_0_00000_00000_01) & ~bubble;
-  
-  assign op16_slli       = (inst_type_masked_j   == 16'b000_0_00000_00001_10) & ~bubble;
-  assign op16_lwsp       = (inst_type_masked     == 16'b010_0_00000_00000_10) & ~bubble;
-  assign op16_jr         = (inst_type_masked_j   == 16'b100_0_00000_00000_10) & ~bubble;
-  assign op16_mv         = (inst_type_masked_mj  == 16'b100_0_00000_00000_10) & ~bubble & ~op16_jr;
-  assign op16_ebreak     = (inst                 == 16'b100_1_00000_00000_10) & ~bubble;
-  assign op16_jalr       = (inst_type_masked_j   == 16'b100_1_00000_00000_10) & ~bubble & ~op16_ebreak;
-  assign op16_add        = (inst_type_masked_mj  == 16'b100_1_00000_00000_10) & ~bubble & ~op16_jalr & ~ op16_ebreak;
-  assign op16_swsp       = (inst_type_masked     == 16'b110_0_00000_00000_10) & ~bubble;
+  wire op16_addi4spn   = (inst_type_masked     == 16'b000_0_00000_00000_00) & ~bubble;
+  wire op16_lw         = (inst_type_masked     == 16'b010_0_00000_00000_00) & ~bubble;
+  wire op16_sw         = (inst_type_masked     == 16'b110_0_00000_00000_00) & ~bubble;
+  wire op16_sb         = (inst_type_masked_zcb == 16'b100_0_10000_00000_00) & ~bubble;
+  wire op16_sh         = (inst_type_masked_zcb == 16'b100_0_11000_00000_00) & ~bubble;
 
-    // Non-standard extensions to support microcode are permitted in these opcode gaps
-  assign op16_slli_setrd = (inst_type_masked_j   == 16'b000_1_00000_00001_10) & ~bubble;
-  assign op16_slli_setrs = (inst_type_masked_j   == 16'b000_1_00000_00010_10) & ~bubble;
-  assign op16_slli_thunk = (inst_type_masked_j   == 16'b000_1_00000_00100_10) & ~bubble;
+  wire op16_addi       = (inst_type_masked     == 16'b000_0_00000_00000_01) & ~bubble;
+  wire op16_jal        = (inst_type_masked     == 16'b001_0_00000_00000_01) & ~bubble;
+  wire op16_li         = (inst_type_masked     == 16'b010_0_00000_00000_01) & ~bubble;
+  wire op16_addi16sp   = (inst_type_masked_i16 == 16'b011_0_00010_00000_01) & ~bubble;
+  wire op16_lui        = (inst_type_masked     == 16'b011_0_00000_00000_01) & ~bubble & ~op16_addi16sp;
+
+  wire op16_srli       = (inst_type_masked_sr  == 16'b100_0_00000_00001_01) & ~bubble;
+  wire op16_srai       = (inst_type_masked_sr  == 16'b100_0_01000_00001_01) & ~bubble;
+  wire op16_andi       = (inst_type_masked_and == 16'b100_0_10000_00000_01) & ~bubble;
+  wire op16_sub        = (inst_type_masked_op  == 16'b100_0_11000_00000_01) & ~bubble;
+  wire op16_xor        = (inst_type_masked_op  == 16'b100_0_11000_01000_01) & ~bubble;
+  wire op16_or         = (inst_type_masked_op  == 16'b100_0_11000_10000_01) & ~bubble;
+  wire op16_and        = (inst_type_masked_op  == 16'b100_0_11000_11000_01) & ~bubble;
+  wire op16_j          = (inst_type_masked     == 16'b101_0_00000_00000_01) & ~bubble;
+  wire op16_beqz       = (inst_type_masked     == 16'b110_0_00000_00000_01) & ~bubble;
+  wire op16_bnez       = (inst_type_masked     == 16'b111_0_00000_00000_01) & ~bubble;
+
+  wire op16_slli       = (inst_type_masked_j   == 16'b000_0_00000_00001_10) & ~bubble;
+  wire op16_lwsp       = (inst_type_masked     == 16'b010_0_00000_00000_10) & ~bubble;
+  wire op16_jr         = (inst_type_masked_j   == 16'b100_0_00000_00000_10) & ~bubble;
+  wire op16_mv         = (inst_type_masked_mj  == 16'b100_0_00000_00000_10) & ~bubble & ~op16_jr;
+  wire op16_ebreak     = (inst                 == 16'b100_1_00000_00000_10) & ~bubble;
+  wire op16_jalr       = (inst_type_masked_j   == 16'b100_1_00000_00000_10) & ~bubble & ~op16_ebreak;
+  wire op16_add        = (inst_type_masked_mj  == 16'b100_1_00000_00000_10) & ~bubble & ~op16_jalr & ~ op16_ebreak;
+  wire op16_swsp       = (inst_type_masked     == 16'b110_0_00000_00000_10) & ~bubble;
+
+  // Non-standard extensions to support microcode are permitted in these opcode gaps
+  wire op16_slli_setrd = (inst_type_masked_j   == 16'b000_1_00000_00001_10) & ~bubble;
+  wire op16_slli_setrs = (inst_type_masked_j   == 16'b000_1_00000_00010_10) & ~bubble;
+  wire op16_slli_thunk = (inst_type_masked_j   == 16'b000_1_00000_00100_10) & ~bubble;
 
   // Blanket matches for RVC and RV32I instructions
-  assign op32 =  &(inst[1:0]) & ~bubble;
-  assign op16 = ~&(inst[1:0]) & ~bubble;
+  wire op32 =  &(inst[1:0]) & ~bubble;
+  wire op16 = ~&(inst[1:0]) & ~bubble;
 
   // Trap on unimplemented instructions
-  assign op32_trap = op32;
+  wire op32_trap = op32;
 
-  assign op16_trap = op16 & ~(
-      op16_addi4spn | op16_lw | op16_sw |
+  wire op16_trap = op16 & ~(
+      op16_addi4spn | op16_lw | op16_sw | op16_sh | op16_sb |
       op16_addi | op16_jal | op16_li | op16_addi16sp | op16_lui |
-      op16_srli | op16_srai | op16_andi | op16_sub| op16_xor| op16_or| op16_and| op16_j| op16_beqz| op16_bnez |
+      op16_srli | op16_srai | op16_andi | op16_sub | op16_xor | op16_or | op16_and | op16_j | op16_beqz | op16_bnez |
       op16_slli | op16_lwsp | op16_jr | op16_mv | op16_ebreak | op16_jalr | op16_add | op16_swsp |
       op16_slli_setrd | op16_slli_setrs | op16_slli_thunk);
 
-  assign trap = op16_trap | op32_trap;
+  wire trap = op16_trap | op32_trap;
 
   // Data bus outputs tap directly off register/ALU path.
-  assign wdata = regD;
+  assign wdata = {32{op16_sh}} & {regD[15:0], regD[15:0]} |
+      {32{op16_sb}} & {regD[7:0], regD[7:0], regD[7:0], regD[7:0]} |
+      {32{!op16_sb & !op16_sh}} & regD;
+
   assign addr = aluS;
   assign rreq = op16_lwsp | op16_lw;
-  assign wmask = 4'b1111 & {4{op16_swsp | op16_sw}};
+  assign wmask = {4{op16_swsp}} | {4{op16_sw}} |
+      {4{op16_sh}} & {{2{inst[5]}}, {2{~inst[5]}}} |
+      {4{op16_sb}} & {inst[6:5]==2'b11, inst[6:5]==2'b01, inst[6:5]==2'b10, inst[6:5]==2'b00};
 
   // Instruction bus outputs do too
   assign inst_addr = {pc_fetch, 1'b0};
 
   // PC logic
-  assign bubble = bubble1 | bubble2;
-
-  assign branch_taken = (op16_beqz & (~|regS)
+  wire branch_taken = (op16_beqz & (~|regS)
                 | (op16_bnez & (|regS)))
                 | op16_j | op16_jal | op16_jr | op16_jalr
                 | op16_slli_thunk;
@@ -230,7 +210,7 @@ module minimax (
   // READ/WRITE register file port
   assign addrD_port = (dra & {5{dly16_slli_setrd | dly16_lw | dly16_lwsp}})
     | (5'b00001 & {5{op16_jal | op16_jalr | trap}}) // write return address into ra
-    | ({2'b01, inst[4:2]} & {5{op16_addi4spn | op16_sw}}) // data
+    | ({2'b01, inst[4:2]} & {5{op16_addi4spn | op16_sw | op16_sh | op16_sb}}) // data
     | (inst[6:2] & {5{op16_swsp}})
     | (inst[11:7] & ({5{op16_addi | op16_add
         | (op16_mv & ~dly16_slli_setrd)
@@ -246,7 +226,7 @@ module minimax (
   assign addrS_port = (dra & {5{dly16_slli_setrs}})
       | (5'b00010 & {5{op16_addi4spn | op16_lwsp | op16_swsp}})
       | (inst[11:7] & {5{op16_jr | op16_jalr | op16_slli_thunk | op16_slli}}) // jump destination
-      | ({2'b01, inst[9:7]} & {5{op16_sw | op16_lw | op16_beqz | op16_bnez}})
+      | ({2'b01, inst[9:7]} & {5{op16_sw | op16_sh | op16_sb | op16_lw | op16_beqz | op16_bnez}})
       | ({2'b01, inst[4:2]} & {5{op16_and | op16_or | op16_xor | op16_sub}})
       | (inst[6:2] & {5{(op16_mv & ~dly16_slli_setrs) | op16_add}});
 
@@ -304,7 +284,7 @@ module minimax (
 
   assign aguX = (aguA + aguB) + {{(PC_BITS-2){1'b0}}, ~(branch_taken | rreq | trap)};
 
-  assign wb = trap |                  // writes microcode x1/ra
+  wire wb = trap |                  // writes microcode x1/ra
              dly16_lw | dly16_lwsp |  // writes data
              op16_jal | op16_jalr |   // writes x1/ra
              op16_li | op16_lui |
@@ -380,6 +360,8 @@ module minimax (
       if(op16_addi4spn)        begin $write("ADI4SPN"); opcode = "ADI4SPN"; end
       else if(op16_lw)         begin $write("LW"); opcode = "LW"; end
       else if(op16_sw)         begin $write("SW"); opcode = "SW"; end
+      else if(op16_sb)         begin $write("SB"); opcode = "SB"; end
+      else if(op16_sh)         begin $write("SH"); opcode = "SH"; end
       else if(op16_addi)       begin $write("ADDI"); opcode = "ADDI"; end
       else if(op16_jal)        begin $write("JAL"); opcode = "JAL"; end
       else if(op16_li)         begin $write("LI"); opcode = "LI"; end
@@ -464,6 +446,8 @@ module minimax (
       if(op16_addi4spn)        begin $write("ADDI4SPN"); opcode = "ADDI4SPN"; end
       else if(op16_lw)         begin $write("LW      "); opcode = "LW      "; end
       else if(op16_sw)         begin $write("SW      "); opcode = "SW      "; end
+      else if(op16_sb)         begin $write("SB      "); opcode = "SB      "; end
+      else if(op16_sh)         begin $write("SH      "); opcode = "SH      "; end
       else if(op16_addi)       begin $write("ADDI    "); opcode = "ADDI    "; end
       else if(op16_jal)        begin $write("JAL     "); opcode = "JAL     "; end
       else if(op16_li)         begin $write("LI      "); opcode = "LI      "; end
@@ -493,7 +477,7 @@ module minimax (
       else if(op32)            begin $write("RV32I   "); opcode = "RV32I   "; end
       else if(bubble)          begin $write("BUBBLE  "); opcode = "BUBBLE  "; end
       else                     begin $write("NOP?    "); opcode = "NOP?    "; end
-      
+
       $write("  %1b.%2H", addrD[5], addrD[4:0]);
       $write("  %1b.%2H", addrS[5], addrS[4:0]);
 
@@ -541,205 +525,78 @@ module minimax (
 `endif // `ifdef ENABLE_TRACE
 
   initial begin
-    register_file[63] = 32'b00000000000000000000000000000000;
-    register_file[62] = 32'b00000000000000000000000000000000;
-    register_file[61] = 32'b00000000000000000000000000000000;
-    register_file[60] = 32'b00000000000000000000000000000000;
-    register_file[59] = 32'b00000000000000000000000000000000;
-    register_file[58] = 32'b00000000000000000000000000000000;
-    register_file[57] = 32'b00000000000000000000000000000000;
-    register_file[56] = 32'b00000000000000000000000000000000;
-    register_file[55] = 32'b00000000000000000000000000000000;
-    register_file[54] = 32'b00000000000000000000000000000000;
-    register_file[53] = 32'b00000000000000000000000000000000;
-    register_file[52] = 32'b00000000000000000000000000000000;
-    register_file[51] = 32'b00000000000000000000000000000000;
-    register_file[50] = 32'b00000000000000000000000000000000;
-    register_file[49] = 32'b00000000000000000000000000000000;
-    register_file[48] = 32'b00000000000000000000000000000000;
-    register_file[47] = 32'b00000000000000000000000000000000;
-    register_file[46] = 32'b00000000000000000000000000000000;
-    register_file[45] = 32'b00000000000000000000000000000000;
-    register_file[44] = 32'b00000000000000000000000000000000;
-    register_file[43] = 32'b00000000000000000000000000000000;
-    register_file[42] = 32'b00000000000000000000000000000000;
-    register_file[41] = 32'b00000000000000000000000000000000;
-    register_file[40] = 32'b00000000000000000000000000000000;
-    register_file[39] = 32'b00000000000000000000000000000000;
-    register_file[38] = 32'b00000000000000000000000000000000;
-    register_file[37] = 32'b00000000000000000000000000000000;
-    register_file[36] = 32'b00000000000000000000000000000000;
-    register_file[35] = 32'b00000000000000000000000000000000;
-    register_file[34] = 32'b00000000000000000000000000000000;
-    register_file[33] = 32'b00000000000000000000000000000000;
-    register_file[32] = 32'b00000000000000000000000000000000;
-    register_file[31] = 32'b00000000000000000000000000000000;
-    register_file[30] = 32'b00000000000000000000000000000000;
-    register_file[29] = 32'b00000000000000000000000000000000;
-    register_file[28] = 32'b00000000000000000000000000000000;
-    register_file[27] = 32'b00000000000000000000000000000000;
-    register_file[26] = 32'b00000000000000000000000000000000;
-    register_file[25] = 32'b00000000000000000000000000000000;
-    register_file[24] = 32'b00000000000000000000000000000000;
-    register_file[23] = 32'b00000000000000000000000000000000;
-    register_file[22] = 32'b00000000000000000000000000000000;
-    register_file[21] = 32'b00000000000000000000000000000000;
-    register_file[20] = 32'b00000000000000000000000000000000;
-    register_file[19] = 32'b00000000000000000000000000000000;
-    register_file[18] = 32'b00000000000000000000000000000000;
-    register_file[17] = 32'b00000000000000000000000000000000;
-    register_file[16] = 32'b00000000000000000000000000000000;
-    register_file[15] = 32'b00000000000000000000000000000000;
-    register_file[14] = 32'b00000000000000000000000000000000;
-    register_file[13] = 32'b00000000000000000000000000000000;
-    register_file[12] = 32'b00000000000000000000000000000000;
-    register_file[11] = 32'b00000000000000000000000000000000;
-    register_file[10] = 32'b00000000000000000000000000000000;
-    register_file[9] = 32'b00000000000000000000000000000000;
-    register_file[8] = 32'b00000000000000000000000000000000;
-    register_file[7] = 32'b00000000000000000000000000000000;
-    register_file[6] = 32'b00000000000000000000000000000000;
-    register_file[5] = 32'b00000000000000000000000000000000;
-    register_file[4] = 32'b00000000000000000000000000000000;
-    register_file[3] = 32'b00000000000000000000000000000000;
-    register_file[2] = 32'b00000000000000000000000000000000;
-    register_file[1] = 32'b00000000000000000000000000000000;
-    register_file[0] = 32'b00000000000000000000000000000000;
+    for(integer i=0; i<64; i++) begin
+      register_file[i] = 32'h00000000;
+    end
   end
 
 `ifdef ENABLE_REGISTER_INSPECTION
   // Wires that make it easier to inspect the register file during simulation
-  wire [31:0] cpu_x0;
-  wire [31:0] cpu_x1;
-  wire [31:0] cpu_x2;
-  wire [31:0] cpu_x3;
-  wire [31:0] cpu_x4;
-  wire [31:0] cpu_x5;
-  wire [31:0] cpu_x6;
-  wire [31:0] cpu_x7;
-  wire [31:0] cpu_x8;
-  wire [31:0] cpu_x9;
-  wire [31:0] cpu_x10;
-  wire [31:0] cpu_x11;
-  wire [31:0] cpu_x12;
-  wire [31:0] cpu_x13;
-  wire [31:0] cpu_x14;
-  wire [31:0] cpu_x15;
-  wire [31:0] cpu_x16;
-  wire [31:0] cpu_x17;
-  wire [31:0] cpu_x18;
-  wire [31:0] cpu_x19;
-  wire [31:0] cpu_x20;
-  wire [31:0] cpu_x21;
-  wire [31:0] cpu_x22;
-  wire [31:0] cpu_x23;
-  wire [31:0] cpu_x24;
-  wire [31:0] cpu_x25;
-  wire [31:0] cpu_x26;
-  wire [31:0] cpu_x27;
-  wire [31:0] cpu_x28;
-  wire [31:0] cpu_x29;
-  wire [31:0] cpu_x30;
-  wire [31:0] cpu_x31;
+  wire [31:0] cpu_x0 = register_file[0];
+  wire [31:0] cpu_x1 = register_file[1];
+  wire [31:0] cpu_x2 = register_file[2];
+  wire [31:0] cpu_x3 = register_file[3];
+  wire [31:0] cpu_x4 = register_file[4];
+  wire [31:0] cpu_x5 = register_file[5];
+  wire [31:0] cpu_x6 = register_file[6];
+  wire [31:0] cpu_x7 = register_file[7];
+  wire [31:0] cpu_x8 = register_file[8];
+  wire [31:0] cpu_x9 = register_file[9];
+  wire [31:0] cpu_x10 = register_file[10];
+  wire [31:0] cpu_x11 = register_file[11];
+  wire [31:0] cpu_x12 = register_file[12];
+  wire [31:0] cpu_x13 = register_file[13];
+  wire [31:0] cpu_x14 = register_file[14];
+  wire [31:0] cpu_x15 = register_file[15];
+  wire [31:0] cpu_x16 = register_file[16];
+  wire [31:0] cpu_x17 = register_file[17];
+  wire [31:0] cpu_x18 = register_file[18];
+  wire [31:0] cpu_x19 = register_file[19];
+  wire [31:0] cpu_x20 = register_file[20];
+  wire [31:0] cpu_x21 = register_file[21];
+  wire [31:0] cpu_x22 = register_file[22];
+  wire [31:0] cpu_x23 = register_file[23];
+  wire [31:0] cpu_x24 = register_file[24];
+  wire [31:0] cpu_x25 = register_file[25];
+  wire [31:0] cpu_x26 = register_file[26];
+  wire [31:0] cpu_x27 = register_file[27];
+  wire [31:0] cpu_x28 = register_file[28];
+  wire [31:0] cpu_x29 = register_file[29];
+  wire [31:0] cpu_x30 = register_file[30];
+  wire [31:0] cpu_x31 = register_file[31];
 
-  wire [31:0] uc_x0;
-  wire [31:0] uc_x1;
-  wire [31:0] uc_x2;
-  wire [31:0] uc_x3;
-  wire [31:0] uc_x4;
-  wire [31:0] uc_x5;
-  wire [31:0] uc_x6;
-  wire [31:0] uc_x7;
-  wire [31:0] uc_x8;
-  wire [31:0] uc_x9;
-  wire [31:0] uc_x10;
-  wire [31:0] uc_x11;
-  wire [31:0] uc_x12;
-  wire [31:0] uc_x13;
-  wire [31:0] uc_x14;
-  wire [31:0] uc_x15;
-  wire [31:0] uc_x16;
-  wire [31:0] uc_x17;
-  wire [31:0] uc_x18;
-  wire [31:0] uc_x19;
-  wire [31:0] uc_x20;
-  wire [31:0] uc_x21;
-  wire [31:0] uc_x22;
-  wire [31:0] uc_x23;
-  wire [31:0] uc_x24;
-  wire [31:0] uc_x25;
-  wire [31:0] uc_x26;
-  wire [31:0] uc_x27;
-  wire [31:0] uc_x28;
-  wire [31:0] uc_x29;
-  wire [31:0] uc_x30;
-  wire [31:0] uc_x31;
-
-  assign cpu_x0 = register_file[0];
-  assign cpu_x1 = register_file[1];
-  assign cpu_x2 = register_file[2];
-  assign cpu_x3 = register_file[3];
-  assign cpu_x4 = register_file[4];
-  assign cpu_x5 = register_file[5];
-  assign cpu_x6 = register_file[6];
-  assign cpu_x7 = register_file[7];
-  assign cpu_x8 = register_file[8];
-  assign cpu_x9 = register_file[9];
-  assign cpu_x10 = register_file[10];
-  assign cpu_x11 = register_file[11];
-  assign cpu_x12 = register_file[12];
-  assign cpu_x13 = register_file[13];
-  assign cpu_x14 = register_file[14];
-  assign cpu_x15 = register_file[15];
-  assign cpu_x16 = register_file[16];
-  assign cpu_x17 = register_file[17];
-  assign cpu_x18 = register_file[18];
-  assign cpu_x19 = register_file[19];
-  assign cpu_x20 = register_file[20];
-  assign cpu_x21 = register_file[21];
-  assign cpu_x22 = register_file[22];
-  assign cpu_x23 = register_file[23];
-  assign cpu_x24 = register_file[24];
-  assign cpu_x25 = register_file[25];
-  assign cpu_x26 = register_file[26];
-  assign cpu_x27 = register_file[27];
-  assign cpu_x28 = register_file[28];
-  assign cpu_x29 = register_file[29];
-  assign cpu_x30 = register_file[30];
-  assign cpu_x31 = register_file[31];
-
-  assign uc_x0 = register_file[0 + 32];
-  assign uc_x1 = register_file[1 + 32];
-  assign uc_x2 = register_file[2 + 32];
-  assign uc_x3 = register_file[3 + 32];
-  assign uc_x4 = register_file[4 + 32];
-  assign uc_x5 = register_file[5 + 32];
-  assign uc_x6 = register_file[6 + 32];
-  assign uc_x7 = register_file[7 + 32];
-  assign uc_x8 = register_file[8 + 32];
-  assign uc_x9 = register_file[9 + 32];
-  assign uc_x10 = register_file[10 + 32];
-  assign uc_x11 = register_file[11 + 32];
-  assign uc_x12 = register_file[12 + 32];
-  assign uc_x13 = register_file[13 + 32];
-  assign uc_x14 = register_file[14 + 32];
-  assign uc_x15 = register_file[15 + 32];
-  assign uc_x16 = register_file[16 + 32];
-  assign uc_x17 = register_file[17 + 32];
-  assign uc_x18 = register_file[18 + 32];
-  assign uc_x19 = register_file[19 + 32];
-  assign uc_x20 = register_file[20 + 32];
-  assign uc_x21 = register_file[21 + 32];
-  assign uc_x22 = register_file[22 + 32];
-  assign uc_x23 = register_file[23 + 32];
-  assign uc_x24 = register_file[24 + 32];
-  assign uc_x25 = register_file[25 + 32];
-  assign uc_x26 = register_file[26 + 32];
-  assign uc_x27 = register_file[27 + 32];
-  assign uc_x28 = register_file[28 + 32];
-  assign uc_x29 = register_file[29 + 32];
-  assign uc_x30 = register_file[30 + 32];
-  assign uc_x31 = register_file[31 + 32];
+  wire [31:0] uc_x0 = register_file[0 + 32];
+  wire [31:0] uc_x1 = register_file[1 + 32];
+  wire [31:0] uc_x2 = register_file[2 + 32];
+  wire [31:0] uc_x3 = register_file[3 + 32];
+  wire [31:0] uc_x4 = register_file[4 + 32];
+  wire [31:0] uc_x5 = register_file[5 + 32];
+  wire [31:0] uc_x6 = register_file[6 + 32];
+  wire [31:0] uc_x7 = register_file[7 + 32];
+  wire [31:0] uc_x8 = register_file[8 + 32];
+  wire [31:0] uc_x9 = register_file[9 + 32];
+  wire [31:0] uc_x10 = register_file[10 + 32];
+  wire [31:0] uc_x11 = register_file[11 + 32];
+  wire [31:0] uc_x12 = register_file[12 + 32];
+  wire [31:0] uc_x13 = register_file[13 + 32];
+  wire [31:0] uc_x14 = register_file[14 + 32];
+  wire [31:0] uc_x15 = register_file[15 + 32];
+  wire [31:0] uc_x16 = register_file[16 + 32];
+  wire [31:0] uc_x17 = register_file[17 + 32];
+  wire [31:0] uc_x18 = register_file[18 + 32];
+  wire [31:0] uc_x19 = register_file[19 + 32];
+  wire [31:0] uc_x20 = register_file[20 + 32];
+  wire [31:0] uc_x21 = register_file[21 + 32];
+  wire [31:0] uc_x22 = register_file[22 + 32];
+  wire [31:0] uc_x23 = register_file[23 + 32];
+  wire [31:0] uc_x24 = register_file[24 + 32];
+  wire [31:0] uc_x25 = register_file[25 + 32];
+  wire [31:0] uc_x26 = register_file[26 + 32];
+  wire [31:0] uc_x27 = register_file[27 + 32];
+  wire [31:0] uc_x28 = register_file[28 + 32];
+  wire [31:0] uc_x29 = register_file[29 + 32];
+  wire [31:0] uc_x30 = register_file[30 + 32];
+  wire [31:0] uc_x31 = register_file[31 + 32];
 `endif // `ifdef ENABLE_REGISTER_INSPECTION
 
 endmodule

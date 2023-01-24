@@ -1,9 +1,9 @@
 PYTHON ?= python3
-CROSS_COMPILE ?= riscv64-unknown-elf-
+CROSS_COMPILE ?= riscv32-corev-elf-
 CROSS_CC ?= $(CROSS_COMPILE)gcc
 CROSS_OBJCOPY ?= $(CROSS_COMPILE)objcopy
 
-CFLAGS := -march=rv32ic -mabi=ilp32	\
+CFLAGS := -march=rv32ic_zcb -mabi=ilp32	\
 	  -fno-pic -nostartfiles -nostdlib
 
 LDFLAGS := -march=rv32ic -mabi=ilp32	\
@@ -11,6 +11,8 @@ LDFLAGS := -march=rv32ic -mabi=ilp32	\
 	   -nostartfiles -nostdlib
 
 default: blink.hex microcode.hex
+
+.PRECIOUS: microcode.o
 
 clean:
 	rm -rf *.o *.hex*

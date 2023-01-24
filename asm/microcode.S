@@ -391,7 +391,7 @@ op32_entry:
 	c.j jalr	/* 19: JALR */
 	c.j .		/* 1a: reserved */
 	c.j jal		/* 1b: JAL */
-	c.j .		/* 1c: SYSTEM */
+	c.j table1c	/* 1c: SYSTEM */
 	c.j .		/* 1d: reserved */
 	c.j .		/* 1e: custom-3/rv128 */
 	c.j .		/* 1f: >=80b */
@@ -447,8 +447,8 @@ table8:
 	c.add ra, x16
 	c.jr ra
 
-	c.j .	/* 8.0: SB */
-	c.j .	/* 8.1: SH */
+	c.j sb	/* 8.0: SB */
+	c.j sh	/* 8.1: SH */
 	c.j sw	/* 8.2: SW */
 	c.j .	/* 8.3: */
 	c.j .	/* 8.4: */
@@ -485,6 +485,21 @@ table18:
 	c.j bge		/* 18.5: BGE */
 	c.j bltu	/* 18.6: BLTU */
 	c.j bgeu	/* 18.7: BGEU */
+
+table1c:
+	c.jal .+2
+	c.addi ra, 6 /* offset to table base */
+	c.add ra, x16
+	c.jr ra
+
+	c.j .		/* 1c.0: */
+	c.j csrrw	/* 1c.1: CSRRW */
+	c.j csrrs	/* 1c.2: CSRRS */
+	c.j csrrc	/* 1c.3: CSRRC */
+	c.j .		/* 1c.4:  */
+	c.j csrrwi	/* 1c.5: CSRRWI */
+	c.j csrrsi	/* 1c.6: CSRRSI */
+	c.j csrrci	/* 1c.7: CSRRCI */
 
 lui:	c.mv x8, x4
 	c.jal srli12
@@ -565,6 +580,60 @@ load_form_address:
 	c.andi x8, -4
 
 	c.jr x31
+
+sb:
+	c.mv x8, x4
+	c.jal srai20
+	c.andi x8, -32 # drop bits 24..20 - these encode rs2
+	c.add x8, x6 # low offset bits
+	c.add x8, x18 # base address
+	c.mv x10, x8
+	c.andi x8, -4 # mask 2 LSBs
+	c.mv x9, x20 # value
+
+	c.andi x10, 3 # extract byte offset
+	c.bnez x10, 1f
+
+	# address ...00
+	c.sb x9, 0(x8)
+	c.j ret_rv32
+
+1:	c.addi x10, -1
+	c.bnez x10, 2f
+
+	# address ...01
+	c.sb x9, 1(x8)
+	c.j ret_rv32
+
+2:	c.addi x10, -1
+	c.bnez x10, 3f
+
+	# address ...10
+	c.sb x9, 2(x8)
+	c.j ret_rv32
+
+3:	# address ...11
+	c.sb x9, 3(x8)
+	c.j ret_rv32
+
+sh:
+	c.mv x8, x4
+	c.jal srai20
+	c.andi x8, -32 # drop bits 24..20 - these encode rs2
+	c.add x8, x6 # low offset bits
+	c.add x8, x18 # base address
+	c.mv x10, x8
+	c.andi x8, -4 # mask 2 LSBs
+	c.mv x9, x20 # value
+
+	c.andi x10, 2 # extract halfword offset
+	c.bnez x10, 1f
+
+	c.sh x9, 0(x8)
+	c.j ret_rv32
+
+1:	c.sh x9, 2(x8)
+	c.j ret_rv32
 
 sw:	c.mv x8, x4
 	c.jal srai20
@@ -927,3 +996,11 @@ resolve_imm1:
 	c.or x8, x9
 
 	c.jr x31
+
+	/* CSRs are no-ops for now. */
+csrrw:	c.j ret_rv32
+csrrs:	c.j ret_rv32
+csrrc:	c.j ret_rv32
+csrrwi:	c.j ret_rv32
+csrrsi:	c.j ret_rv32
+csrrci:	c.j ret_rv32
