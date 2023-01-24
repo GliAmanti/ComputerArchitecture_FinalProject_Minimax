@@ -69,8 +69,7 @@ class minimax(pluginTemplate):
             f"-DROM_SIZE={rom_len} "
             f"-DMICROCODE_BASE={microcode_base} "
             "-DOUTPUT_FILENAME='\"{1}\"' "
-            "-DMAXTICKS=10000000 "
-            "-DENABLE_TRACE "
+            "-DMAXTICKS=2000000 "
             + work_dir + "/../minimax_tb.v "
             + work_dir + "/../../rtl/minimax.v && "
             'vvp -N ./test-harness.vvp'

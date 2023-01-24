@@ -26,10 +26,6 @@
 `define ROM_SIZE 32'h1000 /* bytes */
 `endif
 
-`ifndef VCD_FILENAME
-`define VCD_FILENAME "minimax_tb.vcd"
-`endif
-
 `ifndef MAXTICKS
 `define MAXTICKS 100000
 `endif
@@ -68,8 +64,10 @@ module minimax_tb;
 
     integer i;
     initial begin
+`ifdef VCD_FILENAME
         $dumpfile(`VCD_FILENAME);
         $dumpvars(0, minimax_tb);
+`endif
 
         for (i = 0; i < ROM_SIZE/2; i = i + 1) rom_array[i] = 16'b0;
 
