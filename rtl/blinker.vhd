@@ -9,23 +9,30 @@ library xpm;
 use xpm.vcomponents.all;
 
 entity blinker is port (
-	clk_p, clk_n : in std_logic;
+	clk_100mhz : in std_logic;
 	led : out std_logic := '0');
 end blinker;
 
 architecture behav of blinker is
-	signal clk : std_logic;
+	signal clk_50mhz : std_logic;
 
 	signal inst_addr : std_logic_vector(11 downto 0);
 	signal inst : std_logic_vector(15 downto 0);
 	signal inst_regce : std_logic;
 
-	signal addr, rdata, wdata : std_logic_vector(31 downto 0) := (others => '0');
-	signal wmask : std_logic_vector(3 downto 0) := x"0";
-	signal rreq : std_logic := '0';
-
+	signal addr, wdata : std_logic_vector(31 downto 0);
+	signal rdata : std_logic_vector(31 downto 0) := (others => '0');
+	signal wmask : std_logic_vector(3 downto 0);
+	signal rreq : std_logic;
 begin
-	clk_bufds: ibufds port map (I => clk_p, IB => clk_n, O => clk);
+	-- On 7-series FPGAs, we do not close timing at 100 MHz.
+	clkbuf : bufr
+	generic map (BUFR_DIVIDE => "2")
+	port map (
+		I => clk_100mhz,
+		O => clk_50mhz,
+		CE => '1',
+		CLR => '0');
 
 	rom : xpm_memory_tdpram
 	generic map (
@@ -37,7 +44,7 @@ begin
 		CASCADE_HEIGHT => 0,
 		CLOCKING_MODE => "common_clock",
 		ECC_MODE => "no_ecc",
-		MEMORY_INIT_FILE => "blink.hex",
+		MEMORY_INIT_FILE => "blink.mem",
 		MEMORY_INIT_PARAM => "0",
 		MEMORY_OPTIMIZATION => "true",
 		MEMORY_PRIMITIVE => "block",
@@ -66,8 +73,8 @@ begin
 		doutb => rdata,
 		addra => inst_addr(inst_addr'high downto 1),
 		addrb => addr(inst_addr'high downto 2),
-		clka => clk,
-		clkb => clk,
+		clka => clk_50mhz,
+		clkb => clk_50mhz,
 		dina => 16x"0",
 		dinb => wdata,
 		ena => '1',
@@ -90,7 +97,7 @@ begin
 		UC_BASE => x"00000800",
 		TRACE => False)
 	port map (
-		clk => clk,
+		clk => clk_50mhz,
 		reset => '0',
 		inst_addr => inst_addr,
 		inst => inst,
@@ -102,9 +109,9 @@ begin
 		rreq => rreq);
 
 	-- Capture LED blinker
-	io_proc: process(clk)
+	io_proc: process(clk_50mhz)
 	begin
-		if rising_edge(clk) then
+		if rising_edge(clk_50mhz) then
 			-- Writes to address 0xfffffffc address the LED
 			if wmask=x"f" and addr=x"fffffffc" then
 				led <= wdata(0);

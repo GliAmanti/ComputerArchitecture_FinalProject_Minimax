@@ -10,7 +10,7 @@ LDFLAGS := -march=rv32ic -mabi=ilp32	\
 	   -fno-pic -Wl,--no-relax	\
 	   -nostartfiles -nostdlib
 
-default: blink.hex microcode.hex
+default: blink.mem microcode.hex
 
 .PRECIOUS: microcode.o
 
@@ -28,7 +28,8 @@ clean:
 microcode.hex: microcode.bin
 	$(PYTHON) ./bin2hex $< $@
 
-%.hex: %.bin microcode.hex
+# Xilinx insists on .mem - same instructions for both
+%.hex %.mem: %.bin microcode.hex
 	$(PYTHON) ./bin2hex --microcode=microcode.hex $< $@
 
 # Assembler

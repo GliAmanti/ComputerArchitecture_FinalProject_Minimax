@@ -1,5 +1,5 @@
 _start:
-	li x9, 12499999	/* 1 Hz blinker @ 100 MHz clock */
+	li x9, 6249999	/* 1 Hz blinker @ 50 MHz clock */
 	c.li x10, -4	/* 0xfffffffc -> port address */
 	c.li x11, 0	/* current LED state */
 1:	c.mv x8, x9	/* Initialize counter */
