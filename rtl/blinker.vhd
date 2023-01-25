@@ -24,6 +24,7 @@ architecture behav of blinker is
 	signal rdata : std_logic_vector(31 downto 0) := (others => '0');
 	signal wmask : std_logic_vector(3 downto 0);
 	signal rreq : std_logic;
+	signal rack : std_logic := '0';
 begin
 	-- On 7-series FPGAs, we do not close timing at 100 MHz.
 	clkbuf : bufr
@@ -94,8 +95,7 @@ begin
 	dut : entity work.minimax
 	generic map (
 		PC_BITS => inst_addr'length,
-		UC_BASE => x"00000800",
-		TRACE => False)
+		UC_BASE => x"00000800")
 	port map (
 		clk => clk_50mhz,
 		reset => '0',
@@ -106,12 +106,15 @@ begin
 		wdata => wdata,
 		rdata => rdata,
 		wmask => wmask,
-		rreq => rreq);
+		rreq => rreq,
+		rack => rack);
 
 	-- Capture LED blinker
 	io_proc: process(clk_50mhz)
 	begin
 		if rising_edge(clk_50mhz) then
+			rack <= rreq;
+
 			-- Writes to address 0xfffffffc address the LED
 			if wmask=x"f" and addr=x"fffffffc" then
 				led <= wdata(0);

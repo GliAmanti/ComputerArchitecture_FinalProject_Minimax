@@ -60,26 +60,29 @@ module minimax_tb;
     reg [31:0] rdata;
     wire [3:0] wmask;
     wire rreq;
+    reg rack;
 
     assign rom_window = rom_array[ticks];
 
     always @(posedge clk) begin
 
         rdata <= {rom_array[{addr[PC_BITS-1:2], 1'b1}], rom_array[{addr[PC_BITS-1:2], 1'b0}]};
+        rack <= rreq;
+
         inst_lat <= rom_array[inst_addr[PC_BITS-1:1]];
 
         if (inst_regce) begin
             inst_reg <= inst_lat;
         end
 
-	if (wmask[3])
-	    rom_array[addr[PC_BITS-1:1]+1][15:8] = wdata[31:24];
+        if (wmask[3])
+            rom_array[addr[PC_BITS-1:1]+1][15:8] = wdata[31:24];
         if (wmask[2])
-	    rom_array[addr[PC_BITS-1:1]+1][7:0] = wdata[23:16];
-	if (wmask[1])
-	    rom_array[addr[PC_BITS-1:1]][15:8] = wdata[15:8];
+            rom_array[addr[PC_BITS-1:1]+1][7:0] = wdata[23:16];
+        if (wmask[1])
+            rom_array[addr[PC_BITS-1:1]][15:8] = wdata[15:8];
         if (wmask[0])
-	    rom_array[addr[PC_BITS-1:1]][7:0] = wdata[7:0];
+            rom_array[addr[PC_BITS-1:1]][7:0] = wdata[7:0];
     end
 
     minimax #(
@@ -96,7 +99,8 @@ module minimax_tb;
         .wdata(wdata),
         .rdata(rdata),
         .wmask(wmask),
-        .rreq(rreq)
+        .rreq(rreq),
+        .rack(rack)
     );
 
     initial begin

@@ -28,16 +28,15 @@ module minimax (
    input wire [15:0] inst,
    input wire [31:0] rdata,
    output wire[PC_BITS-1:0] inst_addr,
-   output reg inst_regce,
-   output wire [31:0] addr,
-   output wire [31:0] wdata,
-   output wire [3:0] wmask,
-   output wire rreq);
+   output wire inst_regce,
+   output reg [31:0] addr,
+   output reg [31:0] wdata,
+   output reg [3:0] wmask,
+   output reg rreq,
+   input wire rack);
 
-  // Parameters are currently unimplemented
   parameter PC_BITS = 12;
   parameter [31:0] UC_BASE = 32'h00000000;
-  parameter TRACE = 0;
 
   wire [31:0] uc_base;
   assign uc_base = UC_BASE;
@@ -62,16 +61,15 @@ module minimax (
   // Track bubbles and execution inhibits through the pipeline.
   reg bubble1 = 1'b1, bubble2 = 1'b1;
   reg microcode = 1'b0;
-  wire bubble = bubble1 | bubble2;
+  wire bubble = bubble1 | bubble2 | data_stall;
 
   // Deferred writeback address
   reg [4:0] dra = 5'b0;
 
   // Registers for multi-cycle 16-bit instructions
-  reg dly16_lw = 1'b0;
-  reg dly16_lwsp = 1'b0;
   reg dly16_slli_setrd = 1'b0;
   reg dly16_slli_setrs = 1'b0;
+  reg data_stall = 1'b0;
 
   // Opcode masks for 16-bit instructions
   wire [15:0] inst_type_masked     = inst & 16'b111_0_00000_00000_11;
@@ -137,19 +135,33 @@ module minimax (
 
   wire trap = op16_trap | op32_trap;
 
-  // Data bus outputs tap directly off register/ALU path.
-  assign wdata = {32{op16_sh}} & {regD[15:0], regD[15:0]} |
-      {32{op16_sb}} & {regD[7:0], regD[7:0], regD[7:0], regD[7:0]} |
-      {32{!op16_sb & !op16_sh}} & regD;
+  // Data bus reads and writes are registered
+  always @(posedge clk) begin
+    rreq <= 1'b0;
+    addr <= 1'b0;
+    wmask <= 4'h0;
+    wdata <= 1'b0;
 
-  assign addr = aluS;
-  assign rreq = op16_lwsp | op16_lw;
-  assign wmask = {4{op16_swsp}} | {4{op16_sw}} |
-      {4{op16_sh}} & {{2{inst[5]}}, {2{~inst[5]}}} |
-      {4{op16_sb}} & {inst[6:5]==2'b11, inst[6:5]==2'b01, inst[6:5]==2'b10, inst[6:5]==2'b00};
+    if(reset | rack) begin
+      data_stall <= 'b0;
+    end else if(op16_lw | op16_lwsp) begin
+      addr <= aluS;
+      data_stall <= 1'b1;
+      rreq <= 1'b1;
+    end else if(op16_swsp | op16_sw | op16_sh | op16_sb) begin
+      addr <= aluS;
+      wmask <= {4{op16_swsp}} | {4{op16_sw}} |
+        {4{op16_sh}} & {{2{inst[5]}}, {2{~inst[5]}}} |
+        {4{op16_sb}} & {inst[6:5]==2'b11, inst[6:5]==2'b01, inst[6:5]==2'b10, inst[6:5]==2'b00};
+      wdata <= {32{op16_sh}} & {regD[15:0], regD[15:0]} |
+        {32{op16_sb}} & {regD[7:0], regD[7:0], regD[7:0], regD[7:0]} |
+        {32{!op16_sb & !op16_sh}} & regD;
+    end
+  end
 
-  // Instruction bus outputs do too
+  // Instruction bus outputs
   assign inst_addr = {pc_fetch, 1'b0};
+  assign inst_regce = ~data_stall;
 
   // PC logic
   wire branch_taken = (op16_beqz & (~|regS)
@@ -159,21 +171,20 @@ module minimax (
 
   // Fetch Process
   always @(posedge clk) begin
-    // Update fetch instruction unless we're hung up on a multi-cycle instruction word
-    pc_fetch <= aguX & {(PC_BITS){~reset}};
 
-    // Fetch misses create a 2-cycle penalty
+    // Instruction mis-fetches create a 2-cycle penalty
     bubble2 <= reset | branch_taken | trap;
+    bubble1 <= bubble2;
 
-    // Multi-cycle instructions must correctly pause the fetch/execution pipeline
-    bubble1 <= reset | bubble2 | rreq;
-
-    if (rreq) begin
-      inst_regce <= 1'b0;
-    end else begin
+    // Update fetch instruction unless bubbling
+    if (reset) begin
+      pc_fetch <= 0;
+      pc_fetch_dly <= 0;
+      pc_execute <= 0;
+    end else if (~op16_lw & ~op16_lwsp & (rack | ~data_stall)) begin
+      pc_fetch <= aguX;
       pc_fetch_dly <= pc_fetch;
       pc_execute <= pc_fetch_dly;
-      inst_regce <= 1'b1;
     end
 
     microcode <= (microcode | trap) & ~(reset | op16_slli_thunk);
@@ -195,20 +206,21 @@ module minimax (
 
   // Datapath Process
   always @(posedge clk) begin
-    dly16_lw <= op16_lw;
-    dly16_lwsp <= op16_lwsp;
     dly16_slli_setrs <= op16_slli_setrs;
     dly16_slli_setrd <= op16_slli_setrd;
 
     // Load and setrs/setrd instructions complete a cycle after they are
     // initiated, so we need to keep some state.
-    dra <= (regD[4:0] & ({5{op16_slli_setrd | op16_slli_setrs}}))
+    if(reset)
+      dra <= 5'h0;
+    else if(~bubble)
+      dra <= (regD[4:0] & ({5{op16_slli_setrd | op16_slli_setrs}}))
            | ({2'b01, inst[4:2]} & {5{op16_lw}})
            | (inst[11:7] & {5{op16_lwsp | op32}});
   end
 
   // READ/WRITE register file port
-  assign addrD_port = (dra & {5{dly16_slli_setrd | dly16_lw | dly16_lwsp}})
+  assign addrD_port = (dra & {5{dly16_slli_setrd | rack}})
     | (5'b00001 & {5{op16_jal | op16_jalr | trap}}) // write return address into ra
     | ({2'b01, inst[4:2]} & {5{op16_addi4spn | op16_sw | op16_sh | op16_sb}}) // data
     | (inst[6:2] & {5{op16_swsp}})
@@ -268,7 +280,7 @@ module minimax (
           ((aluA & aluB) & {32{op16_andi | op16_and}}) |
           ((aluA ^ aluB) & {32{op16_xor}}) |
           ((aluA | aluB) & {32{op16_or | op16_mv}}) |
-          (rdata & {32{dly16_lw | dly16_lwsp}}) |
+          (rdata & {32{rack}}) |
           ({{(32-1-PC_BITS-1){1'b0}}, pc_fetch_dly[PC_BITS-1:1], 1'b0} & {32{op16_jal | op16_jalr | trap}}); //  instruction following the jump (hence _dly)
 
   // Address Generation Unit (AGU)
@@ -285,7 +297,7 @@ module minimax (
   assign aguX = (aguA + aguB) + {{(PC_BITS-2){1'b0}}, ~(branch_taken | rreq | trap)};
 
   wire wb = trap |                  // writes microcode x1/ra
-             dly16_lw | dly16_lwsp |  // writes data
+             rack | // writes data
              op16_jal | op16_jalr |   // writes x1/ra
              op16_li | op16_lui |
              op16_addi | op16_addi4spn | op16_addi16sp |
@@ -304,24 +316,6 @@ module minimax (
   // Tracing
 `ifdef ENABLE_TRACE
   initial begin
-`ifdef COMPATIBLE_TRACE
-      $display("FETCH1\t",
-        "FETCH2\t",
-        "EXECUTE\t",
-        "aguA\t",
-        "aguB\t",
-        "aguX\t",
-        "INST\t",
-        "OPCODE\t",
-        "addrD\t",
-        "addrS\t",
-        "regD\t\t",
-        "regS\t\t",
-        "aluA\t\t",
-        "aluB\t\t",
-        "aluS\t\t",
-        "aluX");
-`else
       $display(
           "  FETCH1"
         , "   FETCH2"
@@ -340,7 +334,6 @@ module minimax (
         , "     aluS"
         , "     aluX"
         , " FLAGS");
-`endif
   end
 
   // This register can be viewed in the resulting VCD file by setting
@@ -348,93 +341,6 @@ module minimax (
   reg [9*8:0] opcode;
 
   always @(posedge clk) begin
-`ifdef COMPATIBLE_TRACE
-      $write("%H\t", {pc_fetch, 1'b0});
-      $write("%H\t", {pc_fetch_dly, 1'b0});
-      $write("%H\t", {pc_execute, 1'b0});
-      $write("%H\t", {aguA, 1'b0});
-      $write("%H\t", {aguB, 1'b0});
-      $write("%H\t", {aguX, 1'b0});
-      $write("%H\t", inst);
-
-      if(op16_addi4spn)        begin $write("ADI4SPN"); opcode = "ADI4SPN"; end
-      else if(op16_lw)         begin $write("LW"); opcode = "LW"; end
-      else if(op16_sw)         begin $write("SW"); opcode = "SW"; end
-      else if(op16_sb)         begin $write("SB"); opcode = "SB"; end
-      else if(op16_sh)         begin $write("SH"); opcode = "SH"; end
-      else if(op16_addi)       begin $write("ADDI"); opcode = "ADDI"; end
-      else if(op16_jal)        begin $write("JAL"); opcode = "JAL"; end
-      else if(op16_li)         begin $write("LI"); opcode = "LI"; end
-      else if(op16_addi16sp)   begin $write("ADI16SP"); opcode = "ADI16SP"; end
-      else if(op16_lui)        begin $write("LUI"); opcode = "LUI"; end
-      else if(op16_srli)       begin $write("SRLI"); opcode = "SRLI"; end
-      else if(op16_srai)       begin $write("SRAI"); opcode = "SRAI"; end
-      else if(op16_andi)       begin $write("ANDI"); opcode = "ANDI"; end
-      else if(op16_sub)        begin $write("SUB"); opcode = "SUB"; end
-      else if(op16_xor)        begin $write("XOR"); opcode = "XOR"; end
-      else if(op16_or)         begin $write("OR"); opcode = "OR"; end
-      else if(op16_and)        begin $write("AND"); opcode = "AND"; end
-      else if(op16_j)          begin $write("J"); opcode = "J"; end
-      else if(op16_beqz)       begin $write("BEQZ"); opcode = "BEQZ"; end
-      else if(op16_bnez)       begin $write("BNEZ"); opcode = "BNEZ"; end
-      else if(op16_slli)       begin $write("SLLI"); opcode = "SLLI"; end
-      else if(op16_lwsp)       begin $write("LWSP"); opcode = "LWSP"; end
-      else if(op16_jr)         begin $write("JR"); opcode = "JR"; end
-      else if(op16_mv)         begin $write("MV"); opcode = "MV"; end
-      else if(op16_ebreak)     begin $write("EBREAK"); opcode = "EBREAK"; end
-      else if(op16_jalr)       begin $write("JALR"); opcode = "JALR"; end
-      else if(op16_add)        begin $write("ADD"); opcode = "ADD"; end
-      else if(op16_swsp)       begin $write("SWSP"); opcode = "SWSP"; end
-      else if(op16_slli_thunk) begin $write("THUNK"); opcode = "THUNK"; end
-      else if(op16_slli_setrd) begin $write("SETRD"); opcode = "SETRD"; end
-      else if(op16_slli_setrs) begin $write("SETRS"); opcode = "SETRS"; end
-      else if(op32)            begin $write("RV32I"); opcode = "RV32I"; end
-      else if(bubble)          begin $write("BUBBL"); opcode = "BUBBLE"; end
-      else                     begin $write("NOP?"); opcode = "NOP?"; end
-
-      $write("\t%H", addrD);
-      $write("\t%H", addrS);
-
-      $write("\t%H", regD);
-      $write("\t%H", regS);
-
-      $write("\t%H", aluA);
-      $write("\t%H", aluB);
-      $write("\t%H", aluS);
-      $write("\t%H", aluX);
-
-      if(trap) begin
-        $write("\tTRAP");
-      end
-      if(branch_taken) begin
-        $write("\tTAKEN");
-      end
-      if(bubble) begin
-        $write("\tBUBBLE");
-      end
-      if(wb) begin
-        $write("\tWB");
-      end
-      if(reset) begin
-        $write("\tRESET");
-      end
-      if(microcode) begin
-        $write("\tMCODE");
-      end
-      if(| wmask) begin
-        $write("\tWMASK=%H", wmask);
-        $write("\tADDR=%H", addr);
-        $write("\tWDATA=%H", wdata);
-      end
-      if(rreq) begin
-        $write("\tRREQ");
-        $write("\tADDR=%H", addr);
-      end
-      if(| dra) begin
-        $write("\t@DRA=%H", dra);
-      end
-      $display("");
-`else // `ifdef COMPATIBLE_TRACE
       $write("%8H ", {pc_fetch, 1'b0});
       $write("%8H ", {pc_fetch_dly, 1'b0});
       $write("%8H ", {pc_execute, 1'b0});
@@ -519,8 +425,13 @@ module minimax (
       if(| dra) begin
         $write(" @DRA=%0h", dra);
       end
+      if(~inst_regce) begin
+        $write(" ~REGCE");
+      end
+      if(rack) begin
+        $write(" RACK");
+      end
       $display("");
-`endif // `ifdef COMPATIBLE_TRACE
     end
 `endif // `ifdef ENABLE_TRACE
 
