@@ -1,11 +1,11 @@
 CAPI=2:
 
-name : ::minimax:0
+name : ::minimax:1.0.0
 
 filesets:
   rtl:
     files:
-      - rtl/minimax.vhd : {file_type : vhdlSource-2008}
+      - rtl/minimax.v : {file_type : verilogSource}
 
   tb:
     files:
