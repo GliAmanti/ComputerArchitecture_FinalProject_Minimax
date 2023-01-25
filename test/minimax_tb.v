@@ -12,42 +12,14 @@
 
 `timescale 1 ns / 1 ps
 
-// Use defines here rather than parameters, because iverilog's `-P` argument
-// doesn't seem to work properly.
-`ifndef ROM_FILENAME
-`define ROM_FILENAME "../asm/blink.mem"
-`endif
-
-`ifndef MICROCODE_BASE
-`define MICROCODE_BASE 32'h00000800
-`endif
-
-`ifndef ROM_SIZE
-`define ROM_SIZE 32'h1000 /* bytes */
-`endif
-
-`ifndef MAXTICKS
-`define MAXTICKS 100000
-`endif
-
-`ifdef ENABLE_TRACE
-`define TRACE 1'b1
-`else
-`define TRACE 1'b0
-`endif
-
-`ifndef OUTPUT_FILENAME
-`define OUTPUT_FILENAME "/dev/stdout"
-`endif
-
 module minimax_tb;
-    parameter MAXTICKS = `MAXTICKS;
-    parameter ROM_SIZE = `ROM_SIZE;
+    parameter MAXTICKS = 100000;
+    parameter ROM_SIZE = 32'h1000;
     parameter PC_BITS = $clog2(ROM_SIZE);
-    parameter MICROCODE_BASE = `MICROCODE_BASE;
-    parameter ROM_FILENAME = `ROM_FILENAME;
-    parameter OUTPUT_FILENAME = `OUTPUT_FILENAME;
-    parameter TRACE = `TRACE;
+    parameter MICROCODE_BASE = 32'h800;
+    parameter ROM_FILENAME = "../asm/blink.mem";
+    parameter OUTPUT_FILENAME = "/dev/stdout";
+    parameter TRACE = 0;
 
     reg clk;
     reg reset;

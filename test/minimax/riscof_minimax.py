@@ -65,11 +65,11 @@ class minimax(pluginTemplate):
        )
        self.simcmd = (
             "iverilog -o test-harness.vvp "
-            "-DROM_FILENAME='\"{0}.hex\"' "
-            f"-DROM_SIZE={rom_len} "
-            f"-DMICROCODE_BASE={microcode_base} "
-            "-DOUTPUT_FILENAME='\"{1}\"' "
-            "-DMAXTICKS=2000000 "
+            "-Pminimax_tb.ROM_FILENAME='\"{0}.hex\"' "
+            f"-Pminimax_tb.ROM_SIZE={rom_len} "
+            f"-Pminimax_tb.MICROCODE_BASE={microcode_base} "
+            "-Pminimax_tb.OUTPUT_FILENAME='\"{1}\"' "
+            "-Pminimax_tb.MAXTICKS=2000000 "
             + work_dir + "/../minimax_tb.v "
             + work_dir + "/../../rtl/minimax.v && "
             'vvp -N ./test-harness.vvp'
