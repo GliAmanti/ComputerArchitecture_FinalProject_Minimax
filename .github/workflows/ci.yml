@@ -12,20 +12,5 @@ jobs:
       with:
         path: minimax
 
-    - name: Install Python, FuseSoC, GCC, GNAT, iverilog
-      run: |
-        sudo apt-get install -y python3-setuptools python3-numpy gcc-riscv64-unknown-elf gnat build-essential iverilog
-        pip3 install fusesoc
-
-    - name: Install GHDL
-      run: |
-        git clone https://github.com/ghdl/ghdl.git --branch v2.0.0
-        cd ghdl
-        ./configure
-        make -j
-        sudo make install
-
     - name: Run regression tests
-      run: |
-        cd minimax/test
-        make -j
+      run: make -C minimax/test
