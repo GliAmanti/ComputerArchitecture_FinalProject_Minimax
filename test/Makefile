@@ -1,19 +1,20 @@
 ifeq ($(wildcard /.dockerenv),)
     MAKECMDGOALS ?= default
+    .PHONY: default dockerimage
 
     # Not inside Docker - move inside and re-invoke Make.
     DOCKERNAME=minimax-riscof
     DOCKERSTAMP := .dockerenv-$(DOCKERNAME)-$(shell hostname)
 
     # Invoke Docker
-    $(MAKECMDGOALS): $(DOCKERSTAMP)
+    default: $(DOCKERSTAMP)
 	@echo Moving inside Docker...
 	docker run -it --user "$(shell id -u):$(shell id -g)"		\
 		-v $(shell git rev-parse --show-toplevel):/minimax	\
 		$(DOCKERNAME) make -C /minimax/test $(MAKECMDGOALS)
 
     # Initialize or update the Docker environment
-    $(DOCKERSTAMP): Dockerfile
+    $(DOCKERSTAMP) dockerimage: Dockerfile
 	docker build -t $(DOCKERNAME) .
 	@touch $@
 else
