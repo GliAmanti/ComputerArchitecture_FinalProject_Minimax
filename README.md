@@ -91,7 +91,7 @@ What's the design like?
 
 Resource usage (excluding ROM and peripherals; KU060; 12-bit PC):
 
-* Minimax: 146 FFs, 485 CLB LUTs
+* Minimax: 116 FFs, 398 CLB LUTs
 
 Compare to:
 

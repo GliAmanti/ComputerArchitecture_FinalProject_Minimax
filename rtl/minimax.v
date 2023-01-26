@@ -50,6 +50,10 @@ module minimax (
   wire bD_banksel, bS_banksel;
   wire [31:0] regS, regD, aluA, aluB, aluS, aluX;
 
+  // regP does into a byte permutation, producing regP
+  wire [1:0] selP0, selP1, selP2, selP3;
+  wire [31:0] regP;
+
   // Program counter
   reg [PC_BITS-1:1] pc_fetch = {(PC_BITS-2){1'b0}};
   reg [PC_BITS-1:1] pc_fetch_dly = {(PC_BITS-2){1'b0}};
@@ -153,9 +157,7 @@ module minimax (
       wmask <= {4{op16_swsp}} | {4{op16_sw}} |
         {4{op16_sh}} & {{2{inst[5]}}, {2{~inst[5]}}} |
         {4{op16_sb}} & {inst[6:5]==2'b11, inst[6:5]==2'b01, inst[6:5]==2'b10, inst[6:5]==2'b00};
-      wdata <= {32{op16_sh}} & {regD[15:0], regD[15:0]} |
-        {32{op16_sb}} & {regD[7:0], regD[7:0], regD[7:0], regD[7:0]} |
-        {32{!op16_sb & !op16_sh}} & regD;
+      wdata <= regP;
     end
   end
 
@@ -253,6 +255,21 @@ module minimax (
   assign regD = register_file[addrD];
   assign regS = register_file[addrS];
 
+  // RegD goes straight into a set of byte-select multiplexers to produce
+  // regP. These are currently used for Zcb's c.sb/c.sh instructions, but can
+  // also be used for coarse shifts or rotates.
+  assign regP[7:0]   = selP0[1] ? (selP0[0] ? regD[31:24] : regD[23:16]) : (selP0[0] ? regD[15:8] : regD[7:0]);
+  assign regP[15:8]  = selP1[1] ? (selP1[0] ? regD[31:24] : regD[23:16]) : (selP1[0] ? regD[15:8] : regD[7:0]);
+  assign regP[23:16] = selP2[1] ? (selP2[0] ? regD[31:24] : regD[23:16]) : (selP2[0] ? regD[15:8] : regD[7:0]);
+  assign regP[31:24] = selP3[1] ? (selP3[0] ? regD[31:24] : regD[23:16]) : (selP3[0] ? regD[15:8] : regD[7:0]);
+
+  assign selP0 = 2'b00;
+  assign selP1 = (2'b01 & {2{~op16_sb}});
+  assign selP2 = (2'b10 & {2{~(op16_sb | op16_sh)}});
+  assign selP3 = (2'b01 & {2{op16_sh}}) | (2'b11 & ~(op16_sb | op16_sh));
+
+  // aluA skips the permutation on regP and takes the register-file output
+  // directly.
   assign aluA = (regD & {32{op16_add | op16_addi | op16_sub
                     | op16_and | op16_andi
                     | op16_or | op16_xor
