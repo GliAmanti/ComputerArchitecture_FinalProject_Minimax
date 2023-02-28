@@ -50,7 +50,7 @@ module minimax_tb;
         end
     end
 
-    wire [31:0] rom_window;
+    wire [15:0] rom_window;
     reg [15:0] inst_lat;
     reg [15:0] inst_reg;
     wire inst_regce;
@@ -86,7 +86,6 @@ module minimax_tb;
     end
 
     minimax #(
-        .TRACE(TRACE),
         .PC_BITS(PC_BITS),
         .UC_BASE(MICROCODE_BASE)
     ) dut (
@@ -104,15 +103,15 @@ module minimax_tb;
     );
 
     initial begin
-        reset <= 1'b1;
+        reset = 1'b1;
         #96;
-        reset <= 1'b0;
+        reset = 1'b0;
     end
 
     integer output_fd;
     initial begin
         output_fd = $fopen(OUTPUT_FILENAME, "w");
-        ticks <= 0;
+        ticks = 0;
     end
 
     // Capture test outputs
@@ -121,8 +120,8 @@ module minimax_tb;
         // Track ticks counter and bail if we took too long
         ticks <= ticks + 1;
         if (MAXTICKS != -1 && ticks >= MAXTICKS) begin
-            $fdisplay(output_fd, "FAIL: Exceeded MAXTICKS of %0d", MAXTICKS);
-            $finish_and_return(1);
+            $warning("FAIL: Exceeded MAXTICKS of %0d", MAXTICKS);
+            $finish();
         end
 
         if (&wmask && addr==32'hfffffff8) begin
@@ -130,8 +129,8 @@ module minimax_tb;
             $fdisplay(output_fd, "%x", wdata);
         end
         else if (&wmask && addr==32'hfffffffc) begin
-            // Capture writes to address 0xfffffffc and use these as "quit" values
-            $finish_and_return(wdata);
+            // Just exit
+            $finish();
         end
     end
 

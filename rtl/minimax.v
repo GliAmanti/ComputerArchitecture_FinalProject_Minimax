@@ -55,9 +55,9 @@ module minimax (
   wire [31:0] regP;
 
   // Program counter
-  reg [PC_BITS-1:1] pc_fetch = {(PC_BITS-2){1'b0}};
-  reg [PC_BITS-1:1] pc_fetch_dly = {(PC_BITS-2){1'b0}};
-  reg [PC_BITS-1:1] pc_execute = {(PC_BITS-2){1'b0}};
+  reg [PC_BITS-1:1] pc_fetch = {(PC_BITS-1){1'b0}};
+  reg [PC_BITS-1:1] pc_fetch_dly = {(PC_BITS-1){1'b0}};
+  reg [PC_BITS-1:1] pc_execute = {(PC_BITS-1){1'b0}};
 
   // PC ALU output
   wire [PC_BITS-1:1] aguX, aguA, aguB;
@@ -142,9 +142,9 @@ module minimax (
   // Data bus reads and writes are registered
   always @(posedge clk) begin
     rreq <= 1'b0;
-    addr <= 1'b0;
+    addr <= 32'b0;
     wmask <= 4'h0;
-    wdata <= 1'b0;
+    wdata <= 32'b0;
 
     if(reset | rack) begin
       data_stall <= 'b0;
@@ -266,7 +266,7 @@ module minimax (
   assign selP0 = 2'b00;
   assign selP1 = (2'b01 & {2{~op16_sb}});
   assign selP2 = (2'b10 & {2{~(op16_sb | op16_sh)}});
-  assign selP3 = (2'b01 & {2{op16_sh}}) | (2'b11 & ~(op16_sb | op16_sh));
+  assign selP3 = (2'b01 & {2{op16_sh}}) | (2'b11 & ~{2{op16_sb | op16_sh}});
 
   // aluA skips the permutation on regP and takes the register-file output
   // directly.
@@ -298,7 +298,7 @@ module minimax (
           ((aluA ^ aluB) & {32{op16_xor}}) |
           ((aluA | aluB) & {32{op16_or | op16_mv}}) |
           (rdata & {32{rack}}) |
-          ({{(32-1-PC_BITS-1){1'b0}}, pc_fetch_dly[PC_BITS-1:1], 1'b0} & {32{op16_jal | op16_jalr | trap}}); //  instruction following the jump (hence _dly)
+          ({{(32-PC_BITS){1'b0}}, pc_fetch_dly[PC_BITS-1:1], 1'b0} & {32{op16_jal | op16_jalr | trap}}); //  instruction following the jump (hence _dly)
 
   // Address Generation Unit (AGU)
   assign aguA = (pc_fetch & ~{(PC_BITS-1){trap | branch_taken}})

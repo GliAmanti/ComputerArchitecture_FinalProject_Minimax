@@ -64,16 +64,16 @@ class minimax(pluginTemplate):
                "{0}.bin {0}.hex"
        )
        self.simcmd = (
-            "iverilog -o test-harness.vvp "
-            "-Pminimax_tb.ROM_FILENAME='\"{0}.hex\"' "
-            f"-Pminimax_tb.ROM_SIZE={rom_len} "
-            f"-Pminimax_tb.MICROCODE_BASE={microcode_base} "
-            "-Pminimax_tb.OUTPUT_FILENAME='\"{1}\"' "
-            "-Pminimax_tb.MAXTICKS=3000000 "
-            "-Pminimax_tb.TRACE=1 "
+            "verilator --binary -o test-harness --top minimax_tb "
+            "-GROM_FILENAME='\"{0}.hex\"' "
+            f"-GROM_SIZE={rom_len} "
+            f"-GMICROCODE_BASE={microcode_base} "
+            "-GOUTPUT_FILENAME='\"{1}\"' "
+            "-GMAXTICKS=3000000 "
+            "-GTRACE=1 "
             + work_dir + "/../minimax_tb.v "
             + work_dir + "/../../rtl/minimax.v && "
-            'vvp -N ./test-harness.vvp'
+            'obj_dir/test-harness'
        )
 
     def build(self, isa_yaml, platform_yaml):
@@ -92,7 +92,7 @@ class minimax(pluginTemplate):
             os.remove(self.work_dir+ "/Makefile." + self.name[:-1])
 
       make = utils.makeUtil(makefilePath=os.path.join(self.work_dir, "Makefile." + self.name[:-1]))
-      make.makeCommand = 'make -k -j' + self.num_jobs
+      make.makeCommand = 'make -k VERILATOR=/usr/bin/verilator -j' + self.num_jobs
 
       for testname in testList:
           testentry = testList[testname]
@@ -113,7 +113,7 @@ class minimax(pluginTemplate):
             simcmd = 'echo "NO RUN"'
 
           make.add_target(
-            f'@cd {test_dir} && \\\n'
+            f'+@cd {test_dir} && \\\n'
                           f'{compile_cmd} && \\\n'
                           f'{objcopy_cmd} && \\\n'
                           f'{hexgen_cmd} && \\\n'
