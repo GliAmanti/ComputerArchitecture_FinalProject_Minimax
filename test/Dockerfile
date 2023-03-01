@@ -18,7 +18,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends	\
 	gawk								\
 	git								\
 	gperf								\
-	iverilog							\
 	libexpat-dev							\
 	libgmp-dev							\
 	libgmp3-dev							\
@@ -30,51 +29,62 @@ RUN apt-get update && apt-get install -y --no-install-recommends	\
 	opam								\
 	patchutils							\
 	pkg-config							\
-	python3								\
+	pipx								\
+	python3.10							\
 	python3-numpy							\
 	python3-pip							\
 	rename								\
+	rsync								\
 	texinfo								\
+	verilator							\
 	wget								\
 	z3								\
 	zlib1g-dev							\
 	&& rm -rf /var/lib/apt/lists/*
 
-RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.10 2
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3 2
 RUN mkdir -p $RISCV
+
+# "swuser" corresponds to the tools installation, but need not be the user that
+# runs any tests. (In fact, for CI, it usually isn't - Github uses a "runner"
+# user with a UID that is almost certainly not 1000.)
+RUN useradd -u 1000 -m swuser
+USER swuser
+WORKDIR /home/swuser
+ENV PATH "${PATH}:/home/swuser/.local/bin"
 
 # SAIL
 RUN opam init -y --disable-sandboxing && \
   opam switch create ocaml-base-compiler.4.06.1 && \
-  opam install sail -y && \
-  eval $(opam env) && \
+  opam install sail -y
+
+RUN eval $(opam env) && \
   git clone https://github.com/rems-project/sail-riscv.git && \
   cd sail-riscv && \
   make && \
   ARCH=RV32 make
 
-RUN cp /sail-riscv/c_emulator/riscv_sim_* /usr/bin/
-RUN cp /sail-riscv/ocaml_emulator/riscv_ocaml_sim_* /usr/bin/
-RUN rm -rf /sail-riscv
+RUN mkdir -p ~/.local/bin \
+	&& cp -t ~/.local/bin sail-riscv/c_emulator/riscv_sim_* sail-riscv/ocaml_emulator/riscv_ocaml_sim_* \
+	&& rm -rf sail-riscv
 
 # SPIKE
-RUN git clone https://github.com/riscv/riscv-isa-sim.git -b master && \
-  cd riscv-isa-sim && \
-  mkdir build && \
-  cd build && \
-  ../configure --prefix=$RISCV && \
-  make -j $(nproc) 1>/dev/null && \
-  make install && \
-  cd ../../ && \
+RUN git clone https://github.com/riscv/riscv-isa-sim.git -b master &&	\
+  cd riscv-isa-sim &&							\
+  mkdir build &&							\
+  cd build &&								\
+  ../configure --prefix=$RISCV &&					\
+  make -j $(nproc) 1>/dev/null &&					\
+  make install DESTDIR=~/.local &&					\
+  cd ../../ &&								\
   rm -rf riscv-isa-sim
 
 # Toolchain - unfortunately RISCOF insists on riscv32-corev, and this generates riscv32-unknown.
-RUN git clone -b conditional-build-variables \
-	https://github.com/gsmecher/riscv-code-size-reduction.git riscv-code-size-reduction && \
-  cd riscv-code-size-reduction && git submodule update --init -j $(nproc) --recursive && \
-  cd toolchain && INSTALLPREFIX=/usr/local ./gcc.sh && \
-  cd ../.. && rm -rf riscv-gnu-toolchain && \
-  rename s/unknown/corev/ /usr/local/bin/*
+RUN git clone https://github.com/riscv/riscv-code-size-reduction.git &&	\
+  cd riscv-code-size-reduction && git submodule update --init -j $(nproc) --recursive &&	\
+  cd toolchain && INSTALLPREFIX=~/.local ./gcc.sh &&			\
+  cd ../.. && rm -rf riscv-code-size-reduction &&			\
+  rename s/unknown/corev/ ~/.local/bin/*
 
 # RISCOF
-RUN pip install git+https://github.com/riscv/riscof.git
+RUN pipx install git+https://github.com/riscv/riscof.git
