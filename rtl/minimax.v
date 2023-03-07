@@ -355,7 +355,7 @@ module minimax (
 
   // This register can be viewed in the resulting VCD file by setting
   // the display type to "ASCII".
-  reg [9*8:0] opcode;
+  reg [8*8-1:0] opcode;
 
   always @(posedge clk) begin
       $write("%8H ", {pc_fetch, 1'b0});
