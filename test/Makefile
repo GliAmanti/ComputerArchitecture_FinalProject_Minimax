@@ -11,7 +11,7 @@ ifeq ($(wildcard /.dockerenv),)
 	@echo Moving inside Docker...
 	docker run --user "$(shell id -u):$(shell id -g)"		\
 		-v $(shell git rev-parse --show-toplevel):/minimax	\
-		$(DOCKERNAME) make -C /minimax/test $(MAKECMDGOALS)
+		$(DOCKERNAME) $(MAKE) -C /minimax/test $(MAKECMDGOALS) $(MAKEFLAGS)
 
     # Launch a shell within Docker environment
     shell: $(DOCKERSTAMP)
@@ -38,5 +38,5 @@ else
 		--env=riscv-arch-test/riscv-test-suite/env
 
     quick:
-	./quick
+	./quick $(TESTNAME)
 endif

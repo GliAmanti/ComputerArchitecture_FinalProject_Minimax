@@ -3,7 +3,7 @@
 set -e
 
 D=riscof_work
-TARGET=${1:-and-01.S}
+TARGET=${1:-rv32i_m/I/src/and-01.S}
 
 MAKEFILE_DUT=Makefile.DUT-minimax
 if [ ! -e $D/$MAKEFILE_DUT ]
@@ -11,8 +11,8 @@ then
 	echo $D/$MAKEFILE_DUT did not exist. Run full RISCOF suite first. > /dev/stderr
 	exit 1
 fi
-TARGET_DUT=`awk "/^TARGET.*:$/ {T=\\$1} /src\/$TARGET/ { print T; exit; }" $D/$MAKEFILE_DUT`
-SIGNATURE_DUT=$D/rv32i_m/I/src/and-01.S/ref/*.signature
+TARGET_DUT=`awk -v TARGET="$TARGET" "/:$/ {T=\\$1}; \\$0 ~ TARGET { print T; exit; }" $D/$MAKEFILE_DUT`
+SIGNATURE_DUT=$D/$TARGET/ref/*.signature
 
 MAKEFILE_REF=Makefile.Reference-sail_c_simulator
 if [ ! -e $D/$MAKEFILE_REF ]
@@ -20,8 +20,8 @@ then
 	echo $D/$MAKEFILE_REF did not exist. Run full RISCOF suite first. > /dev/stderr
 	exit 2
 fi
-TARGET_REF=`awk "/^TARGET.*:$/ {T=\\$1} /src\/$TARGET/ { print T; exit; }" $D/$MAKEFILE_REF`
-SIGNATURE_REF=$D/rv32i_m/I/src/and-01.S/dut/*.signature
+TARGET_REF=`awk -v TARGET="$TARGET" "/:$/ {T=\\$1}; \\$0 ~ TARGET { print T; exit; }" $D/$MAKEFILE_REF`
+SIGNATURE_REF=$D/$TARGET/dut/*.signature
 
 rm -f $SIGNATURE_DUT $SIGNATURE_REF
 
