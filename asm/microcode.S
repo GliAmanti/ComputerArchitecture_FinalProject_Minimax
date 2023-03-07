@@ -933,7 +933,7 @@ jal:
 	/* sign extend into imm[20] */
 	c.mv x8, x4
 	c.jal srai32
-	c.jal srli20
+	c.jal slli20
 	c.mv x9, x8
 
 	/* imm[19:12] */
