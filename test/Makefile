@@ -30,11 +30,16 @@ else
 	$(MAKE) -C ../asm
 
     default: asm
-	if [ ! -d riscv-arch-test ]; then				\
-		riscof --verbose info arch-test --clone;		\
+	# Grab a copy of the riscv-arch-test repo. We keep (and apply on
+	# checkout) some clean-up patches here - hopefully these can be phased
+	# out over time.
+	if [ ! -d riscv-arch-test ]; then					\
+		riscof --verbose info arch-test --clone;			\
+		find patches -name '*.patch' -exec patch -d riscv-arch-test -p1 -i ../{} \;	;\
 	fi
-	riscof run --config=config.ini					\
-		--suite=riscv-arch-test/riscv-test-suite		\
+	# Execute tests.
+	riscof run --config=config.ini						\
+		--suite=riscv-arch-test/riscv-test-suite			\
 		--env=riscv-arch-test/riscv-test-suite/env
 
     quick:
