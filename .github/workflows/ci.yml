@@ -14,3 +14,11 @@ jobs:
 
     - name: Run regression tests
       run: make -C minimax/test
+
+    - name: Archive test report
+      uses: actions/upload-artifact@v3
+      with:
+        name: regression-test-report
+        path: |
+          minimax/test/riscof_work/report.html
+          minimax/test/riscof_work/style.css
