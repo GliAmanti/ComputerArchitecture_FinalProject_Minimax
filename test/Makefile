@@ -1,7 +1,6 @@
 ifeq ($(wildcard /.dockerenv),)
     # This Makefile section is evaluated when we aren't inside a Docker
     # environment.  It re-executes make from within Docker and we end up below.
-    MAKECMDGOALS ?= default
     .PHONY: default dockerimage shell quick
 
     DOCKERNAME=gsmecher/minimax-verification:1
@@ -11,7 +10,7 @@ ifeq ($(wildcard /.dockerenv),)
 	@echo Moving inside Docker...
 	docker run --user "$(shell id -u):$(shell id -g)"		\
 		-v $(shell git rev-parse --show-toplevel):/minimax	\
-		$(DOCKERNAME) $(MAKE) -C /minimax/test $(MAKECMDGOALS) $(MAKEFLAGS)
+		$(DOCKERNAME) make -C /minimax/test $@ TESTNAME=$(TESTNAME)
 
     # Launch a shell within Docker environment
     shell: $(DOCKERSTAMP)
