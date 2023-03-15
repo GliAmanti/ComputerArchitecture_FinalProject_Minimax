@@ -86,6 +86,8 @@ class minimax(pluginTemplate):
           self.isa += 'm'
       if "C" in ispec["ISA"]:
           self.isa += 'c'
+      if "Zbkb" in ispec["ISA"]:
+          self.isa += 'zbkb'
 
     def runTests(self, testList):
       if os.path.exists(self.work_dir+ "/Makefile." + self.name[:-1]):

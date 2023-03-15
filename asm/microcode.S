@@ -43,6 +43,7 @@
  * x18: rs1 value
  * x19: rs2/shamt field
  * x20: rs2 value
+ * x21: funct7 field
  *
  * All other (microcode) registers are currently unused.
  */
@@ -352,6 +353,10 @@ op32_entry:
 	/* look up rs2 value from register file (we sometimes need it) */
 	x.peek x20, 19
 
+	/* isolate funct7 */
+	c.jal srli5
+	c.mv x21, x8
+
 	/* create jump based on opcode */
 	c.mv x8, x5
 	c.slli x8, 1 /* 1 compressed instruction per opcode */
@@ -433,11 +438,11 @@ table4:
 	c.jr ra
 
 	c.j addi	/* 4.0: ADDI */
-	c.j slli	/* 4.1: SLLI */
+	c.j slli_zip	/* 4.1: SLLI or bitmanip */
 	c.j slti	/* 4.2: SLTI */
 	c.j sltiu	/* 4.3: SLTIU */
 	c.j xori	/* 4.4: XORI */
-	c.j srli_srai	/* 4.5: SRLI/SRAI */
+	c.j srli_srai_unzip	/* 4.5: SRLI/SRAI or bitmanip */
 	c.j ori		/* 4.6: ORI */
 	c.j andi	/* 4.7: ANDI */
 
@@ -724,34 +729,75 @@ xori:	c.mv x8, x4
 	x.poke 6, x8
 	c.j ret_rv32
 
-slli:
-	c.mv x8, x18
-	c.mv x9, x19
-	c.jal slli_dyn
-	x.poke 6, x8
-	c.j ret_rv32
-
-srli_srai:
+slli_zip:
 	/* Set up operands */
 	c.mv x8, x18
 	c.mv x9, x19
 
-	/* disambiguate srl/sra */
-	c.mv x10, x4
-	c.mv x11, x4
+	/* Disambiguate based on funct7 */
+	c.mv x10, x21
+	c.beqz x10, 1f /* 0 => SLLI */
+	c.addi x10, -4
+	c.beqz x10, zip /* 4 -> Zbkb zip */
 
-	c.slli x11, 1
-	c.slli x11, 1
-	c.srli x11, 1
-	c.srli x11, 1
-	c.xor x11, x10
-	c.beqz x11, 1f
-
-	c.jal srai_dyn
+1:	c.jal slli_dyn
 	x.poke 6, x8
 	c.j ret_rv32
 
+zip:	c.j . /* unimplemented */
+
+srli_srai_unzip:
+	/* Set up operands */
+	c.mv x8, x18
+	c.mv x9, x19
+
+	/* disambiguate based on funct7 */
+	c.mv x10, x21
+	c.beqz x10, 1f /* 0 -> SRLI */
+	c.addi x10, -32
+	c.beqz x10, 2f /* 32 -> SRAI */
+	c.mv x10, x21
+	c.addi x10, -4
+	c.beqz x10, unzip
+
+	c.j . /* unknown/unimplemented: bail */
+
 1:	c.jal srli_dyn
+	x.poke 6, x8
+	c.j ret_rv32
+
+2:	c.jal srai_dyn
+	x.poke 6, x8
+	c.j ret_rv32
+
+unzip:
+	c.li x10, 0 /* even bits go here */
+	c.li x11, 0 /* odd bits go here */
+	c.li x12, 16 /* loop */
+	c.lui x13, 0x8 /* constant 0x8000 */
+
+1:	c.mv x9, x8 /* even bit */
+	c.andi x9, 1 /* mask LSB */
+	c.srli x10, 1 /* make room */
+	c.beqz x9, 2f
+	c.or x10, x13
+2:	c.srli x8, 1
+
+	c.mv x9, x8 /* odd bit */
+	c.andi x9, 1
+	c.srli x11, 1
+	c.beqz x9, 3f
+	c.or x11, x13
+3:	c.srli x8, 1
+
+	c.addi x12, -1
+	c.bnez x12, 1b
+
+	/* now shift odd bits to high word */
+	c.mv x8, x11
+	c.jal slli16
+	c.or x8, x10
+
 	x.poke 6, x8
 	c.j ret_rv32
 
@@ -891,7 +937,7 @@ srl_sra:
 	c.mv x8, x20
 	c.andi x8, 31
 	c.mv x19, x8
-	c.j srli_srai
+	c.j srli_srai_unzip
 
 xor:
 	c.mv x8, x18
