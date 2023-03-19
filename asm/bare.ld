@@ -1,6 +1,5 @@
-MEMORY {
-	BRAM (RWX) : ORIGIN = 0x0, LENGTH = 0x1000
-}
+OUTPUT_ARCH("riscv")
+ENTRY(_start)
 
 SECTIONS {
 	. = 0x0;
@@ -8,9 +7,7 @@ SECTIONS {
 	.text : {
 		_start = .;
 		*(.text)
-
-		. = 0x800;
-		*(.mctext*)
-	} > BRAM
-
+	}
+	.data : { *(.data) }
+	.bss : { *(.bss) }
 }

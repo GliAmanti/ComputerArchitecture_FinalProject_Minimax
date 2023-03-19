@@ -1,2 +1,4 @@
-test_*/
-*.o
+riscof_work/
+riscv-arch-test/
+__pycache__
+.dockerenv-minimax-*

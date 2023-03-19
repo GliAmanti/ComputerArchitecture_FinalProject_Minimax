@@ -1,25 +1,36 @@
 PYTHON ?= python3
-CROSS_COMPILE ?= riscv64-unknown-elf-
+CROSS_COMPILE ?= riscv32-corev-elf-
 CROSS_CC ?= $(CROSS_COMPILE)gcc
 CROSS_OBJCOPY ?= $(CROSS_COMPILE)objcopy
 
-CFLAGS := -march=rv32ic -mabi=ilp32	\
+CFLAGS := -march=rv32ic_zcb -mabi=ilp32	\
 	  -fno-pic -nostartfiles -nostdlib
 
 LDFLAGS := -march=rv32ic -mabi=ilp32	\
 	   -fno-pic -Wl,--no-relax	\
 	   -nostartfiles -nostdlib
 
-default: blink.mem
+default: blink.mem microcode.hex
+
+.PRECIOUS: microcode.o
 
 clean:
-	rm -rf *.o blink.mem*
+	rm -rf *.o *.hex*
 
-# .mem generator
-blink.mem: blink.o microcode.o
-	$(CROSS_CC) $(LDFLAGS) -T bare.ld -o $@.elf $^
-	$(CROSS_OBJCOPY) -O binary $@.elf $@.bin
-	$(PYTHON) ./bin2mem $@.bin $@
+# Linker
+%.elf: %.o
+	$(CROSS_CC) $(LDFLAGS) -T bare.ld -o $@ $<
+
+%.bin: %.elf
+	$(CROSS_OBJCOPY) -O binary $< $@
+
+# Special case: microcode doesn't embed itself
+microcode.hex: microcode.bin
+	$(PYTHON) ./bin2hex $< $@
+
+# Xilinx insists on .mem - same instructions for both
+%.hex %.mem: %.bin microcode.hex
+	$(PYTHON) ./bin2hex --microcode=microcode.hex $< $@
 
 # Assembler
 %.o: %.S

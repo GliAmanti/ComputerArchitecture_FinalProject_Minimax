@@ -18,6 +18,10 @@ pre-decoder. While it passes a modest test suite, you should not use it without
 caution. (There are a large number of excellent, open source, "little" RISC-V
 implementations you should probably use reach for first.)
 
+Both Verilog and VHDL versions of the code are included. The VHDL
+implementation currently lags the Verilog implementation, and may be retired if
+it is not brought up-to-date.
+
 In short:
 
 * RV32C (compressed) instructions are first-class and execute at 1 clock per
@@ -68,8 +72,6 @@ What's awkward?
 * The logic depth in the "execute" pipeline stage is extremely long. This CPU
   will not reach a high FMAX even on Xilinx UltraScale/UltraScale+ FPGAs.
 
-* Store-word (SB) and store-byte (SB) instructions are not yet supported.
-
 What's the design like?
 
 * Three-stage pipeline (fetch, fetch2, and everything-else). The fetch
@@ -89,7 +91,7 @@ What's the design like?
 
 Resource usage (excluding ROM and peripherals; KU060; 12-bit PC):
 
-* Minimax: 46 FFs, 324 CLB LUTs
+* Minimax: 116 FFs, 398 CLB LUTs
 
 Compare to:
 
@@ -111,8 +113,3 @@ Comments and PRs always welcome.
 
 Graeme Smecher
 gsmecher@threespeedlogic.com
-
-## Verilog Port
-
-This repo also contains a Verilog port of the original VHDL code. It runs the same CI as
-the original VHDL implementation, and should be equivalent.
