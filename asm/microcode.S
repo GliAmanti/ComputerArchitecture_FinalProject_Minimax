@@ -89,96 +89,15 @@ microcode_entry:
 	c.lw x8, 0(x9)
 	c.beqz x15, 1f
 
-	/* Half-aligned - if this is 32 bits, remember to grab the other 16 bits later */
+	/* Split instruction - fetch the other half and assemble */
 	c.srli x8, 16
 
-	/* code paths re-join, with at least 16 instruction bits in x8 */
-1:	c.mv x10, x8
-	c.andi x10, 3 /* select quadrant */
-	c.slli x10, 1 /* 1 RVC opcode per table entry */
-
-	/* Table jump */
-	c.jal .+2
-	c.addi ra, 6 /* offset to table base */
-	c.add ra, x10
-	c.jr ra
-
-	/* Quadrant jump table */
-	c.j . /* error - quadrant 0 is directly implemented in RTL */
-	c.j op16_srai_srli
-	c.j op16_slli
-	c.j op32
-
-op32:	/* Complete assembling the 32-bit opcode and unroll the 16-bit fastpath */
-	c.beqz x15, 1f
-
-	/* Split instruction - fetch the other half and assemble */
 	c.mv x10, x8
 	c.lw x8, 4(x9)
 	c.slli x8, 16
 	c.or x8, x10
 1:	c.mv x4, x8
 	c.j op32_entry
-
-op16_shamt_x11:
-	/* We don't need the opcode any more */
-	c.srli x8, 2
-
-	/* Isolate shamt into x11 */
-	c.mv x11, x8
-	c.andi x11, 31
-
-	c.srli x8, 5 /* tail call, so no need to store ra */
-
-op16_srai_srli:
-	c.jal op16_shamt_x11
-	c.mv x9, x8
-
-	/* isolate rd' into rd, stored in x12 */
-	c.mv x12, x8
-	c.andi x12, 0x7
-	c.addi x12, 8
-
-	/* fetch register value into x8 */
-	x.peek x8, 12
-
-	/* Disambiguate SRLI from SRAI */
-	c.andi x9, 8
-	c.beqz x9, 1f
-
-	c.mv x9, x11
-	c.jal srai_dyn
-
-	/* Write back and thunk */
-	x.poke 12, x8
-	c.addi x3, 2
-	x.thunk 3
-
-1:	c.mv x9, x11
-	c.jal srli_dyn
-
-	/* Write back and thunk */
-	x.poke 12, x8
-	c.addi x3, 2
-	x.thunk 3
-
-op16_slli:
-	c.jal op16_shamt_x11
-	c.mv x9, x8
-
-	/* isolate rd, stored in x12 */
-	c.mv x12, x9
-	c.andi x12, 31
-
-	/* fetch register value into x8 */
-	x.peek x8, 12
-	c.mv x9, x11
-	c.jal slli_dyn
-
-	/* Write back and thunk */
-	x.poke 12, x8
-	c.addi x3, 2
-	x.thunk 3
 
 srai_dyn: /* jump table POE. Trashes x15 */
 	c.li x15, 16
