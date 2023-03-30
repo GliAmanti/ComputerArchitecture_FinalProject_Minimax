@@ -34,20 +34,15 @@ module minimax_tb;
         clk = 0;
     end
 
-    integer i;
     initial begin
 `ifdef VCD_FILENAME
         $dumpfile(`VCD_FILENAME);
         $dumpvars(0, minimax_tb);
 `endif
 
-        for (i = 0; i < ROM_SIZE/2; i = i + 1) rom_array[i] = 16'b0;
+        for (integer i = 0; i < ROM_SIZE/2; i = i + 1) rom_array[i] = 16'b0;
 
         $readmemh(ROM_FILENAME, rom_array);
-
-        forever begin
-            @(posedge clk);
-        end
     end
 
     wire [15:0] rom_window;
