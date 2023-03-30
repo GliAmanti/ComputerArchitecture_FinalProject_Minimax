@@ -129,16 +129,7 @@ module minimax (
   wire [4:0] shamt = inst[6:2];
 
   // Trap on unimplemented instructions
-  wire op32_trap = op32;
-
-  wire op16_trap = op16 & ~(
-      op16_addi4spn | op16_lw | op16_sw | op16_sh | op16_sb |
-      op16_addi | op16_jal | op16_li | op16_addi16sp | op16_lui |
-      op16_srli | op16_srai | op16_andi | op16_sub | op16_xor | op16_or | op16_and | op16_j | op16_beqz | op16_bnez |
-      op16_slli | op16_lwsp | op16_jr | op16_mv | op16_ebreak | op16_jalr | op16_add | op16_swsp |
-      op16_slli_setrd | op16_slli_setrs | op16_slli_thunk);
-
-  wire trap = op16_trap | op32_trap;
+  wire trap = op32;
 
   // Data bus reads and writes are registered
   always @(posedge clk) begin
