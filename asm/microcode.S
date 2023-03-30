@@ -471,7 +471,7 @@ lb:	c.jal load_form_address
 	c.addi x9, 1
 	c.bnez x9, 2b
 
-3:	c.jal srai24
+3:	c.srai x8, 24
 	x.poke 6, x8
 	c.j ret_rv32
 
@@ -479,7 +479,7 @@ lh:	c.jal load_form_address
 	c.lw x8, 0(x8)
 	c.bnez x9, 1f
 	c.slli x8, 16
-1:	c.jal srai16
+1:	c.srai x8, 16
 	x.poke 6, x8
 	c.j ret_rv32
 
@@ -515,7 +515,7 @@ load_form_address:
 
 	# x8 -> 32-bit address, possibly unaligned
 	c.mv x8, x4
-	c.jal srai20
+	c.srai x8, 20
 	c.add x8, x18
 
 	# x8 -> 32-bit address; x9 -> address LSBs
@@ -527,7 +527,7 @@ load_form_address:
 
 sb:
 	c.mv x8, x4
-	c.jal srai20
+	c.srai x8, 20
 	c.andi x8, -32 # drop bits 24..20 - these encode rs2
 	c.add x8, x6 # low offset bits
 	c.add x8, x18 # base address
@@ -562,7 +562,7 @@ sb:
 
 sh:
 	c.mv x8, x4
-	c.jal srai20
+	c.srai x8, 20
 	c.andi x8, -32 # drop bits 24..20 - these encode rs2
 	c.add x8, x6 # low offset bits
 	c.add x8, x18 # base address
@@ -580,7 +580,7 @@ sh:
 	c.j ret_rv32
 
 sw:	c.mv x8, x4
-	c.jal srai20
+	c.srai x8, 20
 	c.andi x8, -32 # drop bits 24..20 - these encode rs2
 	c.add x8, x6 # low offset bits
 	c.add x8, x18 # base address
@@ -642,27 +642,27 @@ sltu:
 	c.j ret_rv32
 
 addi:	c.mv x8, x4
-	c.jal srai20
+	c.srai x8, 20
 	c.add x8, x18
 	x.poke 6, x8
 	c.j ret_rv32
 
 andi:	c.mv x8, x4
-	c.jal srai20
+	c.srai x8, 20
 	c.mv x9, x18
 	c.and x8, x9
 	x.poke 6, x8
 	c.j ret_rv32
 
 ori:	c.mv x8, x4
-	c.jal srai20
+	c.srai x8, 20
 	c.mv x9, x18
 	c.or x8, x9
 	x.poke 6, x8
 	c.j ret_rv32
 
 xori:	c.mv x8, x4
-	c.jal srai20
+	c.srai x8, 20
 	c.mv x9, x18
 	c.xor x8, x9
 	x.poke 6, x8
@@ -742,7 +742,7 @@ unzip:
 
 slti:
 	c.mv x8, x4
-	c.jal srai20
+	c.srai x8, 20
 	c.mv x9, x8
 
 	c.mv x8, x18
@@ -752,7 +752,7 @@ slti:
 
 sltiu:
 	c.mv x8, x4
-	c.jal srai20
+	c.srai x8, 20
 	c.mv x9, x8
 
 	c.mv x8, x18
@@ -905,7 +905,7 @@ jalr:
 
 	/* Resolve immediate and add to rd */
 	c.mv x8, x4
-	c.jal srai20
+	c.srai x8, 20
 	c.add x8, x18
 	c.andi x8, -2 /* zero LSB */
 
@@ -915,7 +915,7 @@ jalr:
 jal:
 	/* sign extend into imm[20] */
 	c.mv x8, x4
-	c.jal srai32
+	c.srai x8, 31
 	c.slli x8, 20
 	c.mv x9, x8
 
@@ -956,7 +956,7 @@ resolve_imm1:
 
 	/* Signed immediate per BEQ and friends into x8; x9, x10, x31 destroyed */
 	c.mv x8, x4
-	c.jal srai31
+	c.srai x8, 31
 	c.slli x8, 12 /* sign extend into imm[12] */
 	c.mv x9, x8
 
