@@ -79,7 +79,6 @@ module minimax (
   wire [15:0] inst_type_masked     = inst & 16'b111_0_00000_00000_11;
   wire [15:0] inst_type_masked_zcb = inst & 16'b111_1_11000_00000_11;
   wire [15:0] inst_type_masked_i16 = inst & 16'b111_0_11111_00000_11;
-  wire [15:0] inst_type_masked_sr  = inst & 16'b111_1_11000_11111_11;
   wire [15:0] inst_type_masked_and = inst & 16'b111_0_11000_00000_11;
   wire [15:0] inst_type_masked_op  = inst & 16'b111_0_11000_11000_11;
   wire [15:0] inst_type_masked_j   = inst & 16'b111_1_00000_11111_11;
@@ -98,8 +97,8 @@ module minimax (
   wire op16_addi16sp   = (inst_type_masked_i16 == 16'b011_0_00010_00000_01) & ~bubble;
   wire op16_lui        = (inst_type_masked     == 16'b011_0_00000_00000_01) & ~bubble & ~op16_addi16sp;
 
-  wire op16_srli       = (inst_type_masked_sr  == 16'b100_0_00000_00001_01) & ~bubble;
-  wire op16_srai       = (inst_type_masked_sr  == 16'b100_0_01000_00001_01) & ~bubble;
+  wire op16_srli       = (inst_type_masked_zcb == 16'b100_0_00000_00000_01) & ~bubble;
+  wire op16_srai       = (inst_type_masked_zcb == 16'b100_0_01000_00000_01) & ~bubble;
   wire op16_andi       = (inst_type_masked_and == 16'b100_0_10000_00000_01) & ~bubble;
   wire op16_sub        = (inst_type_masked_op  == 16'b100_0_11000_00000_01) & ~bubble;
   wire op16_xor        = (inst_type_masked_op  == 16'b100_0_11000_01000_01) & ~bubble;
@@ -109,7 +108,7 @@ module minimax (
   wire op16_beqz       = (inst_type_masked     == 16'b110_0_00000_00000_01) & ~bubble;
   wire op16_bnez       = (inst_type_masked     == 16'b111_0_00000_00000_01) & ~bubble;
 
-  wire op16_slli       = (inst_type_masked_j   == 16'b000_0_00000_00001_10) & ~bubble;
+  wire op16_slli       = (inst_type_masked_mj  == 16'b000_0_00000_00000_10) & ~bubble;
   wire op16_lwsp       = (inst_type_masked     == 16'b010_0_00000_00000_10) & ~bubble;
   wire op16_jr         = (inst_type_masked_j   == 16'b100_0_00000_00000_10) & ~bubble;
   wire op16_mv         = (inst_type_masked_mj  == 16'b100_0_00000_00000_10) & ~bubble & ~op16_jr;
@@ -126,6 +125,8 @@ module minimax (
   // Blanket matches for RVC and RV32I instructions
   wire op32 =  &(inst[1:0]) & ~bubble;
   wire op16 = ~&(inst[1:0]) & ~bubble;
+
+  wire [4:0] shamt = inst[6:2];
 
   // Trap on unimplemented instructions
   wire op32_trap = op32;
@@ -239,7 +240,7 @@ module minimax (
   // READ-ONLY register file port
   assign addrS_port = (dra & {5{dly16_slli_setrs}})
       | (5'b00010 & {5{op16_addi4spn | op16_lwsp | op16_swsp}})
-      | (inst[11:7] & {5{op16_jr | op16_jalr | op16_slli_thunk | op16_slli}}) // jump destination
+      | (inst[11:7] & {5{op16_jr | op16_jalr | op16_slli_thunk}}) // jump destination
       | ({2'b01, inst[9:7]} & {5{op16_sw | op16_sh | op16_sb | op16_lw | op16_beqz | op16_bnez}})
       | ({2'b01, inst[4:2]} & {5{op16_and | op16_or | op16_xor | op16_sub}})
       | (inst[6:2] & {5{(op16_mv & ~dly16_slli_setrs) | op16_add}});
@@ -273,8 +274,7 @@ module minimax (
   assign aluA = (regD & {32{op16_add | op16_addi | op16_sub
                     | op16_and | op16_andi
                     | op16_or | op16_xor
-                    | op16_addi16sp
-                    | op16_slli | op16_srli | op16_srai}})
+                    | op16_addi16sp}})
           | ({22'b0, inst[10:7], inst[12:11], inst[5], inst[6], 2'b0} & {32{op16_addi4spn}})
           | ({24'b0, inst[8:7], inst[12:9], 2'b0} & {32{op16_swsp}})
           | ({24'b0, inst[3:2], inst[12], inst[6:4], 2'b0} & {32{op16_lwsp}})
@@ -291,10 +291,11 @@ module minimax (
   assign aluX = (aluS & (
                     {32{op16_add | op16_sub | op16_addi
                       | op16_li | op16_lui
-                      | op16_addi4spn | op16_addi16sp
-                      | op16_slli}})) |
-          ({op16_srai & aluA[31], aluA[31:1]} & {32{op16_srai | op16_srli}}) |
+                      | op16_addi4spn | op16_addi16sp}})) |
           ((aluA & aluB) & {32{op16_andi | op16_and}}) |
+	  ((regD >> shamt) & {32{op16_srli}}) |
+	  ($unsigned($signed(regD) >>> shamt) & {32{op16_srai}}) |
+	  ((regD << shamt) & {32{op16_slli}}) |
           ((aluA ^ aluB) & {32{op16_xor}}) |
           ((aluA | aluB) & {32{op16_or | op16_mv}}) |
           (rdata & {32{rack}}) |

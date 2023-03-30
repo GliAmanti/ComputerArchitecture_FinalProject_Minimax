@@ -1,17 +1,40 @@
 /*
- * microcode.s: RV32I emulation for the Minimax C.x processor core.
+ * Minimax: microcoded RISC-V
  *
- * (c) 2022 Three-Speed Logic, Inc. All rights reserved.
+ * (c) 2022-2023 Three-Speed Logic, Inc. <gsmecher@threespeedlogic.com>
+ *
+ * RISC-V's compressed instruction (RVC) extension is intended as an add-on to
+ * the regular, 32-bit instruction set, not a replacement or competitor. Its
+ * designers designed RVC instructions to be expanded into regular 32-bit RV32I
+ * equivalents via a pre-decoder.
+ *
+ * What happens if we *explicitly* architect a RISC-V CPU to execute RVC
+ * instructions, and "mop up" any RV32I instructions that aren't convenient via
+ * a microcode layer? What architectural optimizations are unlocked as a result?
+ *
+ * "Minimax" is an experimental RISC-V implementation intended to establish if
+ * an RVC-optimized CPU is, in practice, any simpler than an ordinary RV32I
+ * core with pre-decoder. While it passes a modest test suite, you should not
+ * use it without caution. (There are a large number of excellent, open source,
+ * "little" RISC-V implementations you should probably use reach for first.)
  */
 
+/* "x.poke" write the value of an emulation-mode register into an user-mode
+ * register. */
 .macro x.poke rd, rs
 	.half 0x1006 + (\rd << 7)
 	c.mv x8, \rs
 .endm
+
+/* "x.peek" reads from an user-mode register and deposits the result into an
+ * emulation register. */
 .macro x.peek rd, rs
 	.half 0x100a + (\rs << 7)
 	c.mv \rd, x8
 .endm
+
+/* "x.thunk" jumps from emulation mode back into user mode at the PC specified
+ * in register "rd". */
 .macro x.thunk rd
 	.half 0x1012 + (\rd << 7)
 .endm
@@ -22,11 +45,10 @@
  * - Register 0x21 (that's "microcode" x1) contains the return address we should jump to
  *   (that's the trap PC, plus 2).
  *
- * It is not safe to use emulated instructions here, since the CPU will
- * double-trap. Instead, use jal to call the emulated instruction locally (if
- * we can stick to some sort of ABI)
+ * It is not safe to use emulated instructions in microcode, since the CPU
+ * doesn't gracefully double-fault.
  *
- * Because C.x instructions have such a limited range, we use the following ABI:
+ * We decode the emulated instruction into the following registers:
  *
  * x1 / ra: reserved for 1-deep function calls/returns
  * x2 / sp: RESERVED - could be pointer to microcode constants/variables
@@ -68,7 +90,7 @@ microcode_entry:
 	c.beqz x15, 1f
 
 	/* Half-aligned - if this is 32 bits, remember to grab the other 16 bits later */
-	c.jal srli16
+	c.srli x8, 16
 
 	/* code paths re-join, with at least 16 instruction bits in x8 */
 1:	c.mv x10, x8
@@ -93,21 +115,20 @@ op32:	/* Complete assembling the 32-bit opcode and unroll the 16-bit fastpath */
 	/* Split instruction - fetch the other half and assemble */
 	c.mv x10, x8
 	c.lw x8, 4(x9)
-	c.jal slli16
+	c.slli x8, 16
 	c.or x8, x10
 1:	c.mv x4, x8
 	c.j op32_entry
 
 op16_shamt_x11:
 	/* We don't need the opcode any more */
-	c.srli x8, 1
-	c.srli x8, 1
+	c.srli x8, 2
 
 	/* Isolate shamt into x11 */
 	c.mv x11, x8
 	c.andi x11, 31
 
-	c.j srli5 /* tail call, so no need to store ra */
+	c.srli x8, 5 /* tail call, so no need to store ra */
 
 op16_srai_srli:
 	c.jal op16_shamt_x11
@@ -316,27 +337,26 @@ op32_entry:
 	c.mv x8, x4
 
 1:	/* Isolate opcode into x5 - note we strip the lower bits, which are always 11 */
-	c.srli x8, 1
-	c.srli x8, 1
+	c.srli x8, 2
 	c.mv x9, x8
 	c.andi x9, 0x1f
 	c.mv x5, x9
 
 	/* Isolate rd */
-	c.jal srli5
+	c.srli x8, 5
 	c.mv x9, x8
 	c.andi x9, 0x1f
 	c.mv x6, x9
 
 	/* isolate funct3, left shifted by 1 for jump tables */
-	c.jal srli5
+	c.srli x8, 5
 	c.mv x9, x8
 	c.andi x9, 0x7
 	c.slli x9, 1
 	c.mv x16, x9
 
 	/* isolate rs1 */
-	c.jal srli3
+	c.srli x8, 3
 	c.mv x9, x8
 	c.andi x9, 0x1f
 	c.mv x17, x9
@@ -345,7 +365,7 @@ op32_entry:
 	x.peek x18, 17
 
 	/* isolate rs2/shamt */
-	c.jal srli5
+	c.srli x8, 5
 	c.mv x9, x8
 	c.andi x9, 0x1f
 	c.mv x19, x9
@@ -354,7 +374,7 @@ op32_entry:
 	x.peek x20, 19
 
 	/* isolate funct7 */
-	c.jal srli5
+	c.srli x8, 5
 	c.mv x21, x8
 
 	/* create jump based on opcode */
@@ -507,14 +527,14 @@ table1c:
 	c.j csrrci	/* 1c.7: CSRRCI */
 
 lui:	c.mv x8, x4
-	c.jal srli12
-	c.jal slli12
+	c.srli x8, 12
+	c.slli x8, 12
 	x.poke 6, x8
 	c.j ret_rv32
 
 auipc:	c.mv x8, x4
-	c.jal srli12
-	c.jal slli12
+	c.srli x8, 12
+	c.slli x8, 12
 	c.add x8, x3
 	x.poke 6, x8
 	c.j ret_rv32
@@ -528,7 +548,7 @@ lb:	c.jal load_form_address
 
 	c.addi x9, -3
 1:	c.beqz x9, 3f
-2:	c.jal slli8
+2:	c.slli x8, 8
 	c.addi x9, 1
 	c.bnez x9, 2b
 
@@ -539,7 +559,7 @@ lb:	c.jal load_form_address
 lh:	c.jal load_form_address
 	c.lw x8, 0(x8)
 	c.bnez x9, 1f
-	c.jal slli16
+	c.slli x8, 16
 1:	c.jal srai16
 	x.poke 6, x8
 	c.j ret_rv32
@@ -554,11 +574,11 @@ lbu:	c.jal load_form_address
 
 	c.addi x9, -3
 1:	c.beqz x9, 3f
-2:	c.jal slli8
+2:	c.slli x8, 8
 	c.addi x9, 1
 	c.bnez x9, 2b
 
-3:	c.jal srli24
+3:	c.srli x8, 24
 	x.poke 6, x8
 	c.j ret_rv32
 
@@ -566,8 +586,8 @@ lbu:	c.jal load_form_address
 lhu:	c.jal load_form_address
 	c.lw x8, 0(x8)
 	c.bnez x9, 1f
-	c.jal slli16
-1:	c.jal srli16
+	c.slli x8, 16
+1:	c.srli x8, 16
 	x.poke 6, x8
 	c.j ret_rv32
 
@@ -795,7 +815,7 @@ unzip:
 
 	/* now shift odd bits to high word */
 	c.mv x8, x11
-	c.jal slli16
+	c.slli x8, 16
 	c.or x8, x10
 
 	x.poke 6, x8
@@ -854,7 +874,7 @@ slt_func: /* clobbers x10, x11 */
 	/* Compare MSBs */
 	c.mv x10, x8
 	c.xor x8, x9
-	c.jal srli31
+	c.srli x8, 31
 	c.beqz x8, 1f
 
 	/* MSBs differed: right-shift to avoid overflow */
@@ -864,7 +884,7 @@ slt_func: /* clobbers x10, x11 */
 1:	/* MSBs were the same. Compare directly. */
 	c.sub x10, x9
 	c.mv x8, x10
-	c.jal srli31
+	c.srli x8, 31
 
 	c.jr x31
 
@@ -874,7 +894,7 @@ sltu_func: /* clobbers x10, x11 */
 	/* Compare MSBs */
 	c.mv x10, x8
 	c.xor x8, x9
-	c.jal srli31
+	c.srli x8, 31
 	c.beqz x8, 1f
 
 	/* MSBs differed: right-shift to avoid overflow */
@@ -884,7 +904,7 @@ sltu_func: /* clobbers x10, x11 */
 1:	/* MSBs were the same. Compare directly. */
 	c.sub x10, x9
 	c.mv x8, x10
-	c.jal srli31
+	c.srli x8, 31
 
 	c.jr x31
 
@@ -909,10 +929,8 @@ add_sub:
 	/* disambiguate add/sub */
 	c.mv x10, x4
 	c.mv x11, x4
-	c.slli x11, 1
-	c.slli x11, 1
-	c.srli x11, 1
-	c.srli x11, 1
+	c.slli x11, 2
+	c.srli x11, 2
 	c.sub x10, x11
 
 	c.beqz x10, 1f
@@ -979,12 +997,12 @@ jal:
 	/* sign extend into imm[20] */
 	c.mv x8, x4
 	c.jal srai32
-	c.jal slli20
+	c.slli x8, 20
 	c.mv x9, x8
 
 	/* imm[19:12] */
 	c.lui x8, 0x1f /* 0x1f000 */
-	c.jal slli3
+	c.slli x8, 3
 	c.lui x10, 0x7
 	c.or x10, x8 /* form 0xff000 */
 
@@ -995,13 +1013,13 @@ jal:
 	/* imm[11] */
 	c.mv x8, x19
 	c.andi x8, 1
-	c.jal slli11
+	c.slli x8, 11
 	c.or x9, x8
 
 	/* imm[10:1] */
 	c.mv x8, x4
 	c.slli x8, 1
-	c.jal srli21
+	c.srli x8, 21
 	c.andi x8, -2
 	c.or x8, x9
 
@@ -1020,20 +1038,20 @@ resolve_imm1:
 	/* Signed immediate per BEQ and friends into x8; x9, x10, x31 destroyed */
 	c.mv x8, x4
 	c.jal srai31
-	c.jal slli12 /* sign extend into imm[12] */
+	c.slli x8, 12 /* sign extend into imm[12] */
 	c.mv x9, x8
 
 	/* pick imm[11] */
 	c.mv x8, x6
 	c.andi x8, 1
-	c.jal slli11
+	c.slli x8, 11
 	c.or x9, x8
 
 	/* pick imm[10:5] */
 	c.mv x8, x4
 	c.slli x8, 1
-	c.jal srli26
-	c.jal slli5
+	c.srli x8, 26
+	c.slli x8, 5
 	c.or x9, x8
 
 	/* pick imm[4:1] */
