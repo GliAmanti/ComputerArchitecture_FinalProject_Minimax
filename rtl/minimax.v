@@ -288,14 +288,19 @@ module minimax (
   // This synthesizes into 4 CARRY8s - no need for manual xor/cin heroics
   assign aluS = op16_sub ? (aluA - aluB) : (aluA + aluB);
 
+  // Full shifter: uses a single shift operator, with bit reversal to handle
+  // c.slli, c.srli, and c.srai.
+  wire [31:0] regD_reversed = {<<{regD}};
+  wire signed [32:0] ishift = inst[15] ? {regD[31] & op16_srai, regD} : {1'b0, regD_reversed};
+  wire [32:0] rshift = ishift >>> shamt;
+  wire [31:0] oshift = inst[15] ? rshift[31:0] : {<<{rshift[31:0]}};
+
   assign aluX = (aluS & (
                     {32{op16_add | op16_sub | op16_addi
                       | op16_li | op16_lui
                       | op16_addi4spn | op16_addi16sp}})) |
           ((aluA & aluB) & {32{op16_andi | op16_and}}) |
-	  ((regD >> shamt) & {32{op16_srli}}) |
-	  ($unsigned($signed(regD) >>> shamt) & {32{op16_srai}}) |
-	  ((regD << shamt) & {32{op16_slli}}) |
+	  (oshift & {32{op16_slli | op16_srai | op16_srli}}) |
           ((aluA ^ aluB) & {32{op16_xor}}) |
           ((aluA | aluB) & {32{op16_or | op16_mv}}) |
           (rdata & {32{rack}}) |
