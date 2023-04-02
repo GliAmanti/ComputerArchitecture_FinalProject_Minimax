@@ -28,7 +28,6 @@ module minimax (
    input wire [15:0] inst,
    input wire [31:0] rdata,
    output wire[PC_BITS-1:0] inst_addr,
-   output wire inst_regce,
    output reg [31:0] addr,
    output reg [31:0] wdata,
    output reg [3:0] wmask,
@@ -43,6 +42,9 @@ module minimax (
 
   // Register file
   reg [31:0] register_file[63:0];
+
+  // Instruction register
+  reg [15:0] inst_reg;
 
   // Register file address ports
   wire [5:0] addrS, addrD;
@@ -72,13 +74,13 @@ module minimax (
   reg data_stall = 1'b0;
 
   // Opcode masks for 16-bit instructions
-  wire [15:0] inst_type_masked     = inst & 16'b111_0_00000_00000_11;
-  wire [15:0] inst_type_masked_zcb = inst & 16'b111_1_11000_00000_11;
-  wire [15:0] inst_type_masked_i16 = inst & 16'b111_0_11111_00000_11;
-  wire [15:0] inst_type_masked_and = inst & 16'b111_0_11000_00000_11;
-  wire [15:0] inst_type_masked_op  = inst & 16'b111_0_11000_11000_11;
-  wire [15:0] inst_type_masked_j   = inst & 16'b111_1_00000_11111_11;
-  wire [15:0] inst_type_masked_mj  = inst & 16'b111_1_00000_00000_11;
+  wire [15:0] inst_type_masked     = inst_reg & 16'b111_0_00000_00000_11;
+  wire [15:0] inst_type_masked_zcb = inst_reg & 16'b111_1_11000_00000_11;
+  wire [15:0] inst_type_masked_i16 = inst_reg & 16'b111_0_11111_00000_11;
+  wire [15:0] inst_type_masked_and = inst_reg & 16'b111_0_11000_00000_11;
+  wire [15:0] inst_type_masked_op  = inst_reg & 16'b111_0_11000_11000_11;
+  wire [15:0] inst_type_masked_j   = inst_reg & 16'b111_1_00000_11111_11;
+  wire [15:0] inst_type_masked_mj  = inst_reg & 16'b111_1_00000_00000_11;
 
   // From 16.8 (RVC Instruction Set Listings)
   wire op16_addi4spn   = (inst_type_masked     == 16'b000_0_00000_00000_00) & ~bubble;
@@ -108,7 +110,7 @@ module minimax (
   wire op16_lwsp       = (inst_type_masked     == 16'b010_0_00000_00000_10) & ~bubble;
   wire op16_jr         = (inst_type_masked_j   == 16'b100_0_00000_00000_10) & ~bubble;
   wire op16_mv         = (inst_type_masked_mj  == 16'b100_0_00000_00000_10) & ~bubble & ~op16_jr;
-  wire op16_ebreak     = (inst                 == 16'b100_1_00000_00000_10) & ~bubble;
+  wire op16_ebreak     = (inst_reg             == 16'b100_1_00000_00000_10) & ~bubble;
   wire op16_jalr       = (inst_type_masked_j   == 16'b100_1_00000_00000_10) & ~bubble & ~op16_ebreak;
   wire op16_add        = (inst_type_masked_mj  == 16'b100_1_00000_00000_10) & ~bubble & ~op16_jalr & ~ op16_ebreak;
   wire op16_swsp       = (inst_type_masked     == 16'b110_0_00000_00000_10) & ~bubble;
@@ -119,8 +121,8 @@ module minimax (
   wire op16_slli_thunk = (inst_type_masked_j   == 16'b000_1_00000_00100_10) & ~bubble;
 
   // Blanket matches for RVC and RV32I instructions
-  wire op32 =  &(inst[1:0]) & ~bubble;
-  wire op16 = ~&(inst[1:0]) & ~bubble;
+  wire op32 =  &(inst_reg[1:0]) & ~bubble;
+  wire op16 = ~&(inst_reg[1:0]) & ~bubble;
 
   // Trap on unimplemented instructions
   wire trap = op32;
@@ -132,6 +134,9 @@ module minimax (
     wmask <= 4'h0;
     wdata <= 32'b0;
 
+    if(~data_stall)
+      inst_reg <= inst;
+
     if(reset | rack) begin
       data_stall <= 'b0;
     end else if(op16_lw | op16_lwsp) begin
@@ -141,15 +146,14 @@ module minimax (
     end else if(op16_swsp | op16_sw | op16_sh | op16_sb) begin
       addr <= aluS;
       wmask <= {4{op16_swsp}} | {4{op16_sw}} |
-        {4{op16_sh}} & {{2{inst[5]}}, {2{~inst[5]}}} |
-        {4{op16_sb}} & {inst[6:5]==2'b11, inst[6:5]==2'b01, inst[6:5]==2'b10, inst[6:5]==2'b00};
+        {4{op16_sh}} & {{2{inst_reg[5]}}, {2{~inst_reg[5]}}} |
+        {4{op16_sb}} & {inst_reg[6:5]==2'b11, inst_reg[6:5]==2'b01, inst_reg[6:5]==2'b10, inst_reg[6:5]==2'b00};
       wdata <= oshift;
     end
   end
 
   // Instruction bus outputs
   assign inst_addr = {pc_fetch, 1'b0};
-  assign inst_regce = ~data_stall;
 
   // PC logic
   wire branch_taken = (op16_beqz & (~|regS)
@@ -203,32 +207,32 @@ module minimax (
       dra <= 5'h0;
     else if(~bubble)
       dra <= (regD[4:0] & ({5{op16_slli_setrd | op16_slli_setrs}}))
-           | ({2'b01, inst[4:2]} & {5{op16_lw}})
-           | (inst[11:7] & {5{op16_lwsp | op32}});
+           | ({2'b01, inst_reg[4:2]} & {5{op16_lw}})
+           | (inst_reg[11:7] & {5{op16_lwsp | op32}});
   end
 
   // READ/WRITE register file port
   assign addrD_port = (dra & {5{dly16_slli_setrd | rack}})
-    | (5'b00001 & {5{op16_jal | op16_jalr | trap}}) // write return address into ra
-    | ({2'b01, inst[4:2]} & {5{op16_addi4spn | op16_sw | op16_sh | op16_sb}}) // data
-    | (inst[6:2] & {5{op16_swsp}})
-    | (inst[11:7] & ({5{op16_addi | op16_add
-        | (op16_mv & ~dly16_slli_setrd)
-        | op16_addi16sp
-        | op16_slli_setrd | op16_slli_setrs
-        | op16_li | op16_lui
-        | op16_slli}}))
-    | ({2'b01, inst[9:7]} & {5{op16_sub
-        | op16_xor | op16_or | op16_and | op16_andi
-        | op16_srli | op16_srai}});
+        | (5'b00001 & {5{op16_jal | op16_jalr | trap}}) // write return address into ra
+        | ({2'b01, inst_reg[4:2]} & {5{op16_addi4spn | op16_sw | op16_sh | op16_sb}}) // data
+        | (inst_reg[6:2] & {5{op16_swsp}})
+        | (inst_reg[11:7] & ({5{op16_addi | op16_add
+            | (op16_mv & ~dly16_slli_setrd)
+            | op16_addi16sp
+            | op16_slli_setrd | op16_slli_setrs
+            | op16_li | op16_lui
+            | op16_slli}}))
+        | ({2'b01, inst_reg[9:7]} & {5{op16_sub
+            | op16_xor | op16_or | op16_and | op16_andi
+            | op16_srli | op16_srai}});
 
-  // READ-ONLY register file port
+      // READ-ONLY register file port
   assign addrS_port = (dra & {5{dly16_slli_setrs}})
-      | (5'b00010 & {5{op16_addi4spn | op16_lwsp | op16_swsp}})
-      | (inst[11:7] & {5{op16_jr | op16_jalr | op16_slli_thunk}}) // jump destination
-      | ({2'b01, inst[9:7]} & {5{op16_sw | op16_sh | op16_sb | op16_lw | op16_beqz | op16_bnez}})
-      | ({2'b01, inst[4:2]} & {5{op16_and | op16_or | op16_xor | op16_sub}})
-      | (inst[6:2] & {5{(op16_mv & ~dly16_slli_setrs) | op16_add}});
+          | (5'b00010 & {5{op16_addi4spn | op16_lwsp | op16_swsp}})
+          | (inst_reg[11:7] & {5{op16_jr | op16_jalr | op16_slli_thunk}}) // jump destination
+          | ({2'b01, inst_reg[9:7]} & {5{op16_sw | op16_sh | op16_sb | op16_lw | op16_beqz | op16_bnez}})
+          | ({2'b01, inst_reg[4:2]} & {5{op16_and | op16_or | op16_xor | op16_sub}})
+          | (inst_reg[6:2] & {5{(op16_mv & ~dly16_slli_setrs) | op16_add}});
 
   // Select between "normal" and "microcode" register banks.
   assign bD_banksel = (microcode ^ dly16_slli_setrd) | trap;
@@ -245,31 +249,31 @@ module minimax (
                     | op16_and | op16_andi
                     | op16_or | op16_xor
                     | op16_addi16sp}})
-          | ({22'b0, inst[10:7], inst[12:11], inst[5], inst[6], 2'b0} & {32{op16_addi4spn}})
-          | ({24'b0, inst[8:7], inst[12:9], 2'b0} & {32{op16_swsp}})
-          | ({24'b0, inst[3:2], inst[12], inst[6:4], 2'b0} & {32{op16_lwsp}})
-          | ({25'b0, inst[5], inst[12:10], inst[6], 2'b0} & {32{op16_lw | op16_sw}});
+          | ({22'b0, inst_reg[10:7], inst_reg[12:11], inst_reg[5], inst_reg[6], 2'b0} & {32{op16_addi4spn}})
+          | ({24'b0, inst_reg[8:7], inst_reg[12:9], 2'b0} & {32{op16_swsp}})
+          | ({24'b0, inst_reg[3:2], inst_reg[12], inst_reg[6:4], 2'b0} & {32{op16_lwsp}})
+          | ({25'b0, inst_reg[5], inst_reg[12:10], inst_reg[6], 2'b0} & {32{op16_lw | op16_sw}});
 
   assign aluB = regS
-          | ({{27{inst[12]}}, inst[6:2]} & {32{op16_addi | op16_andi | op16_li}})
-          | ({{15{inst[12]}}, inst[6:2], 12'b0} & {32{op16_lui}})
-          | ({{23{inst[12]}}, inst[4:3], inst[5], inst[2], inst[6], 4'b0} & {32{op16_addi16sp}});
+          | ({{27{inst_reg[12]}}, inst_reg[6:2]} & {32{op16_addi | op16_andi | op16_li}})
+          | ({{15{inst_reg[12]}}, inst_reg[6:2], 12'b0} & {32{op16_lui}})
+          | ({{23{inst_reg[12]}}, inst_reg[4:3], inst_reg[5], inst_reg[2], inst_reg[6], 4'b0} & {32{op16_addi16sp}});
 
   // This synthesizes into 4 CARRY8s - no need for manual xor/cin heroics
   assign aluS = op16_sub ? (aluA - aluB) : (aluA + aluB);
 
   // Full shifter: uses a single shift operator, with bit reversal to handle
   // c.slli, c.srli, and c.srai.
-  //wire shift_right = inst[15];
+  //wire shift_right = inst_reg[15];
   wire shift_right = op16_srli | op16_srai;
   reg [4:0] shamt;
   always @(*)
   case(1'b1)
-    op16_srli: shamt=inst[6:2];
-    op16_srai: shamt=inst[6:2];
-    op16_slli: shamt=inst[6:2];
-    op16_sb: shamt={inst[5], inst[6], 3'b0};
-    op16_sh: shamt={inst[5], 4'b0};
+    op16_srli: shamt=inst_reg[6:2];
+    op16_srai: shamt=inst_reg[6:2];
+    op16_slli: shamt=inst_reg[6:2];
+    op16_sb: shamt={inst_reg[5], inst_reg[6], 3'b0};
+    op16_sh: shamt={inst_reg[5], 4'b0};
     default: shamt=0; // sw, swsp, ...
   endcase
 
@@ -295,9 +299,9 @@ module minimax (
         | (pc_execute & {(PC_BITS-1){branch_taken}} & ~{(PC_BITS-1){op16_jr | op16_jalr | op16_slli_thunk}});
 
   assign aguB = (regS[PC_BITS-1:1] & {(PC_BITS-1){op16_jr | op16_jalr | op16_slli_thunk}})
-        | ({{(PC_BITS-11){inst[12]}}, inst[8], inst[10:9], inst[6], inst[7], inst[2], inst[11], inst[5:3]}
+        | ({{(PC_BITS-11){inst_reg[12]}}, inst_reg[8], inst_reg[10:9], inst_reg[6], inst_reg[7], inst_reg[2], inst_reg[11], inst_reg[5:3]}
               & {(PC_BITS-1){branch_taken & (op16_j | op16_jal)}})
-        | ({{(PC_BITS-8){inst[12]}}, inst[6:5], inst[2], inst[11:10], inst[4:3]}
+        | ({{(PC_BITS-8){inst_reg[12]}}, inst_reg[6:5], inst_reg[2], inst_reg[11:10], inst_reg[4:3]}
               & {(PC_BITS-1){branch_taken & (op16_bnez | op16_beqz)}})
         | (uc_base[PC_BITS-1:1] & {(PC_BITS-1){trap}});
 
@@ -354,7 +358,7 @@ module minimax (
       $write("%8H ", {aguA, 1'b0});
       $write("%8H ", {aguB, 1'b0});
       $write("%8H ", {aguX, 1'b0});
-      $write("%8H ", inst);
+      $write("%8H ", inst_reg);
 
       if(op16_addi4spn)        begin $write("ADDI4SPN"); opcode = "ADDI4SPN"; end
       else if(op16_lw)         begin $write("LW      "); opcode = "LW      "; end
@@ -431,9 +435,6 @@ module minimax (
       end
       if(| dra) begin
         $write(" @DRA=%0h", dra);
-      end
-      if(~inst_regce) begin
-        $write(" ~REGCE");
       end
       if(rack) begin
         $write(" RACK");
