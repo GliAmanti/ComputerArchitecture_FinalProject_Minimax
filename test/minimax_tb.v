@@ -49,6 +49,7 @@ module minimax_tb;
     reg [15:0] inst;
 
     wire [PC_BITS-1:0] inst_addr;
+    wire inst_ce;
     wire [31:0] addr, wdata;
     reg [31:0] rdata;
     wire [3:0] wmask;
@@ -62,7 +63,8 @@ module minimax_tb;
         rdata <= {rom_array[{addr[PC_BITS-1:2], 1'b1}], rom_array[{addr[PC_BITS-1:2], 1'b0}]};
         rack <= rreq;
 
-        inst <= rom_array[inst_addr[PC_BITS-1:1]];
+	if(inst_ce)
+          inst <= rom_array[inst_addr[PC_BITS-1:1]];
 
         if (wmask[3])
             rom_array[addr[PC_BITS-1:1]+1][15:8] = wdata[31:24];
@@ -81,6 +83,7 @@ module minimax_tb;
         .clk(clk),
         .reset(reset),
         .inst_addr(inst_addr),
+	.inst_ce(inst_ce),
         .inst(inst),
         .addr(addr),
         .wdata(wdata),

@@ -18,7 +18,7 @@ architecture behav of blinker is
 
 	signal inst_addr : std_logic_vector(11 downto 0);
 	signal inst : std_logic_vector(15 downto 0);
-	signal inst_regce : std_logic;
+	signal inst_ce : std_logic;
 
 	signal addr, wdata : std_logic_vector(31 downto 0);
 	signal rdata : std_logic_vector(31 downto 0) := (others => '0');
@@ -53,7 +53,7 @@ begin
 		MESSAGE_CONTROL => 0,
 		READ_DATA_WIDTH_A => 16,
 		READ_DATA_WIDTH_B => 32,
-		READ_LATENCY_A => 2,
+		READ_LATENCY_A => 1,
 		READ_LATENCY_B => 1,
 		READ_RESET_VALUE_A => "0",
 		READ_RESET_VALUE_B => "0",
@@ -78,14 +78,14 @@ begin
 		clkb => clk_50mhz,
 		dina => 16x"0",
 		dinb => wdata,
-		ena => '1',
+		ena => inst_ce,
 		enb => rreq,
 		injectdbiterra => '0',
 		injectdbiterrb => '0',
 		injectsbiterra => '0',
 		injectsbiterrb => '0',
-		regcea => inst_regce,
-		regceb => '1',
+		regcea => '0',
+		regceb => '0',
 		rsta => '0',
 		rstb => '0',
 		sleep => '0',
@@ -100,8 +100,8 @@ begin
 		clk => clk_50mhz,
 		reset => '0',
 		inst_addr => inst_addr,
+		inst_ce => inst_ce,
 		inst => inst,
-		inst_regce => inst_regce,
 		addr => addr,
 		wdata => wdata,
 		rdata => rdata,
