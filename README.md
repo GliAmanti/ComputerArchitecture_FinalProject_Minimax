@@ -18,15 +18,13 @@ pre-decoder. While it passes a modest test suite, you should not use it without
 caution. (There are a large number of excellent, open source, "little" RISC-V
 implementations you should probably use reach for first.)
 
-Both Verilog and VHDL versions of the code are included. The VHDL
-implementation currently lags the Verilog implementation, and may be retired if
-it is not brought up-to-date.
+Originally, we included both Verilog and VHDL implementations. Sadly, the VHDL
+implementation has been retired.
 
 In short:
 
 * RV32C (compressed) instructions are first-class and execute at 1 clock per
-  instruction. (Exceptions: branches have a 2-cycle "not taken" penalty, and
-  shifts with shamt!=1 are emulated.)
+  instruction. (Exceptions: branches have a 2-cycle "taken" penalty.)
 
 * All RV32I instructions are emulated in microcode, using the instructions
   above.
@@ -69,14 +67,9 @@ What's awkward?
   ugliness is better masked when RVC instructions are decoded to RV32I and
   executed as "regular" 32-bit instructions.
 
-* The logic depth in the "execute" pipeline stage is extremely long. This CPU
-  will not reach a high FMAX even on Xilinx UltraScale/UltraScale+ FPGAs.
-
 What's the design like?
 
-* Three-stage pipeline (fetch, fetch2, and everything-else). The fetch
-  pipeline is 2 cycles long to allow the use of embedded block RAM
-  registers, which frees up more clock slack for the execution stage.
+* Three-stage pipeline (fetch, decode, and everything-else).
   There is a corresponding 2-cycle penalty on taken branches.
 
 * Several "extension instructions" that use the non-standard extension space
@@ -86,12 +79,12 @@ What's the design like?
   - "Thunk" from microcode back to standard code,
   - Move data from "user" registers into "microcode" registers and back again.
 
-  Because these extension instructions reach deeply into the implementation
-  details, they are ignored (converted to NOPs) outside emulation microcode.
+  These instructions are only part of the microcode - you are not required to
+  build an unusual toolchain to use Minimax.
 
 Resource usage (excluding ROM and peripherals; KU060; 12-bit PC):
 
-* Minimax: 116 FFs, 481 CLB LUTs
+* Minimax: 191 FFs, 507 CLB LUTs
 
 Compare to:
 

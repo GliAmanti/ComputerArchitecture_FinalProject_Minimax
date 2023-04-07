@@ -49,9 +49,8 @@ module minimax (
 
   // Register file address ports
   wire [5:0] addrS, addrD;
-  wire [4:0] addrD_port, addrS_port;
-  reg [4:0] addrD_port_lookahead, addrS_port_lookahead;
-  wire bD_banksel, bS_banksel;
+  reg [4:0] addrD_port, addrS_port;
+  reg bD_banksel, bS_banksel;
   wire [31:0] regS, regD, aluA, aluB, aluS, aluX;
 
   // Program counter
@@ -67,10 +66,6 @@ module minimax (
   wire stall_f, stall_d, stall_e;
 
   reg microcode = 1'b0;
-
-  // Registers for multi-cycle 16-bit instructions
-  reg dly16_slli_setrd = 1'b0;
-  reg dly16_slli_setrs = 1'b0;
 
   // Instruction strobes at fetch and decode cycles
   logic op16_add_d, op16_add_e,
@@ -115,6 +110,7 @@ module minimax (
   wire [15:0] inst_type_masked_j_d   = inst & 16'b111_1_00000_11111_11;
   wire [15:0] inst_type_masked_mj_d  = inst & 16'b111_1_00000_00000_11;
 
+  // One-hot decode flags for different instruction types.
   assign op16_addi4spn_d   = (inst_type_masked_d     == 16'b000_0_00000_00000_00);
   assign op16_lw_d         = (inst_type_masked_d     == 16'b010_0_00000_00000_00);
   assign op16_sw_d         = (inst_type_masked_d     == 16'b110_0_00000_00000_00);
@@ -144,7 +140,7 @@ module minimax (
   assign op16_mv_d         = (inst_type_masked_mj_d  == 16'b100_0_00000_00000_10) & ~op16_jr_d;
   assign op16_ebreak_d     = (inst                   == 16'b100_1_00000_00000_10);
   assign op16_jalr_d       = (inst_type_masked_j_d   == 16'b100_1_00000_00000_10) & ~op16_ebreak_d;
-  assign op16_add_d        = (inst_type_masked_mj_d  == 16'b100_1_00000_00000_10) & ~op16_jalr_d & ~ op16_ebreak_d;
+  assign op16_add_d        = (inst_type_masked_mj_d  == 16'b100_1_00000_00000_10) & ~op16_jalr_d & ~op16_ebreak_d;
   assign op16_swsp_d       = (inst_type_masked_d     == 16'b110_0_00000_00000_10);
 
   // Non-standard extensions to support microcode are permitted in these opcode gaps
@@ -187,8 +183,8 @@ module minimax (
       op16_swsp_e <= op16_swsp_d;
       op16_xor_e <= op16_xor_d;
       op32_e <= op32_d;
-    end;
-  end;
+    end
+  end
 
   // Stall loads between rreq and rack
   reg ld_stall = 0;
@@ -262,7 +258,6 @@ module minimax (
       end
     end
 
-
 `ifdef ENABLE_ASSERTS
     if (microcode & op32_e & ~bubble_e) begin
       $display("Double trap!");
@@ -278,50 +273,60 @@ module minimax (
 
   end
 
-  // Datapath Process
-  always @(posedge clk) begin
-    dly16_slli_setrs <= op16_slli_setrs_e & ~bubble_e;
-    dly16_slli_setrd <= op16_slli_setrd_e & ~bubble_e;
-  end
-
   // READ/WRITE register file port
+  reg [31:0] aluA_imm, aluB_imm;
   always @(posedge clk) begin
     if(reset | bubble_d) begin
-      addrD_port_lookahead <= 0;
-      addrS_port_lookahead <= 0;
-    end else begin
-      addrD_port_lookahead <=
+      addrD_port <= 0;
+      addrS_port <= 0;
+      bD_banksel <= 0;
+      bS_banksel <= 0;
+      aluA_imm <= 0;
+      aluB_imm <= 0;
+    end else if(~stall_e) begin
+      addrD_port <=
         (5'b00001 & {5{op16_jal_d | op16_jalr_d | op32_d}}) // write return address into ra
         | (regD[4:0] & {5{op16_slli_setrd_e & ~bubble_e}})
         | (inst[6:2] & {5{op16_swsp_d}})
-        | ({2'b01, inst[9:7]} & {5{op16_sub_d | op16_xor_d | op16_or_d | op16_and_d | op16_andi_d | op16_srli_d | op16_srai_d}});
-      addrS_port_lookahead <= (regD[4:0] & {5{op16_slli_setrs_e & ~bubble_e}})
+        | ({2'b01, inst[9:7]} & {5{op16_sub_d | op16_xor_d | op16_or_d | op16_and_d | op16_andi_d | op16_srli_d | op16_srai_d}})
+        | ({2'b01, inst[4:2]} & {5{op16_addi4spn_d | op16_sw_d | op16_sh_d | op16_sb_d | op16_lw_d}}) // data
+        | (inst[11:7] & ({5{op16_addi_d | op16_add_d
+            | (op16_mv_d & (~op16_slli_setrd_e | bubble_e))
+            | op16_addi16sp_d
+            | op16_slli_setrd_d | op16_slli_setrs_d
+            | op16_li_d | op16_lui_d
+            | op16_lwsp_d
+            | op16_slli_d}}));
+
+      // READ-ONLY register file port
+      addrS_port <= (regD[4:0] & {5{op16_slli_setrs_e & ~bubble_e}})
           | (5'b00010 & {5{op16_addi4spn_d | op16_lwsp_d | op16_swsp_d}})
           | ({2'b01, inst[9:7]} & {5{op16_sw_d | op16_sh_d | op16_sb_d | op16_lw_d | op16_beqz_d | op16_bnez_d}})
           | ({2'b01, inst[4:2]} & {5{op16_and_d | op16_or_d | op16_xor_d | op16_sub_d}})
-          | (inst[11:7] & {5{op16_jr_d | op16_jalr_d | op16_slli_thunk_d}});// jump destination
+          | (inst[11:7] & {5{op16_jr_d | op16_jalr_d | op16_slli_thunk_d}}) // jump destination
+          | (inst[6:2] & {5{(op16_mv_d & (~op16_slli_setrs_e | bubble_e)) | op16_add_d}});
 
-    end;
-  end;
+      bD_banksel <= (microcode ^ (~bubble_e & op16_slli_setrd_e)) | op32_d;
+      bS_banksel <= (microcode ^ (~bubble_e & op16_slli_setrs_e)) | op32_d;
 
-  assign addrD_port = addrD_port_lookahead
-        | ({2'b01, inst_e[4:2]} & {5{op16_addi4spn_e | op16_sw_e | op16_sh_e | op16_sb_e | op16_lw_e}}) // data
-        | (inst_e[11:7] & ({5{op16_addi_e | op16_add_e
-            | (op16_mv_e & ~dly16_slli_setrd)
-            | op16_addi16sp_e
-            | op16_slli_setrd_e | op16_slli_setrs_e
-            | op16_li_e | op16_lui_e
-            | op16_lwsp_e
-            | op16_slli_e}}));
+      unique case(1'b1)
+        op16_addi4spn_d: aluA_imm <= {22'b0, inst[10:7], inst[12:11], inst[5], inst[6], 2'b0};
+        op16_swsp_d: aluA_imm <= {24'b0, inst[8:7], inst[12:9], 2'b0};
+        op16_lwsp_d: aluA_imm <= {24'b0, inst[3:2], inst[12], inst[6:4], 2'b0};
+        op16_lw_d | op16_sw_d: aluA_imm <= {25'b0, inst[5], inst[12:10], inst[6], 2'b0};
+	default: aluA_imm <= 0;
+      endcase
 
-  // READ-ONLY register file port
-  assign addrS_port = addrS_port_lookahead
-          | (inst_e[6:2] & {5{(op16_mv_e & ~dly16_slli_setrs) | op16_add_e}});
+      unique case(1'b1)
+	op16_addi_d | op16_andi_d | op16_li_d: aluB_imm <= {{27{inst[12]}}, inst[6:2]};
+	op16_lui_d: aluB_imm <= {{15{inst[12]}}, inst[6:2], 12'b0};
+        op16_addi16sp_d: aluB_imm <= {{23{inst[12]}}, inst[4:3], inst[5], inst[2], inst[6], 4'b0};
+	default: aluB_imm <= 0;
+      endcase
+    end
+  end
 
   // Select between "normal" and "microcode" register banks.
-  assign bD_banksel = (microcode ^ dly16_slli_setrd) | op32_e;
-  assign bS_banksel = (microcode ^ dly16_slli_setrs) | op32_e;
-
   assign addrD = {bD_banksel, addrD_port};
   assign addrS = {bS_banksel, addrS_port};
 
@@ -329,43 +334,43 @@ module minimax (
   assign regD = register_file[addrD];
   assign regS = register_file[addrS];
 
-  assign aluA = (regD & {32{op16_add_e | op16_addi_e | op16_sub_e
-                    | op16_and_e | op16_andi_e
-                    | op16_or_e | op16_xor_e
-                    | op16_addi16sp_e}})
-          | ({22'b0, inst_e[10:7], inst_e[12:11], inst_e[5], inst_e[6], 2'b0} & {32{op16_addi4spn_e}})
-          | ({24'b0, inst_e[8:7], inst_e[12:9], 2'b0} & {32{op16_swsp_e}})
-          | ({24'b0, inst_e[3:2], inst_e[12], inst_e[6:4], 2'b0} & {32{op16_lwsp_e}})
-          | ({25'b0, inst_e[5], inst_e[12:10], inst_e[6], 2'b0} & {32{op16_lw_e | op16_sw_e}});
+  assign aluA = aluA_imm
+    | (regD & {32{op16_add_e | op16_addi_e | op16_sub_e
+                | op16_and_e | op16_andi_e
+                | op16_or_e | op16_xor_e
+                | op16_addi16sp_e}});
 
-  assign aluB = regS
-          | ({{27{inst_e[12]}}, inst_e[6:2]} & {32{op16_addi_e | op16_andi_e | op16_li_e}})
-          | ({{15{inst_e[12]}}, inst_e[6:2], 12'b0} & {32{op16_lui_e}})
-          | ({{23{inst_e[12]}}, inst_e[4:3], inst_e[5], inst_e[2], inst_e[6], 4'b0} & {32{op16_addi16sp_e}});
+  assign aluB = aluB_imm | regS;
 
   // This synthesizes into 4 CARRY8s - no need for manual xor/cin heroics
   assign aluS = op16_sub_e ? (aluA - aluB) : (aluA + aluB);
 
   // Full shifter: uses a single shift operator, with bit reversal to handle
   // c.slli, c.srli, and c.srai.
-  //wire shift_right = inst_e[15];
-  wire shift_right = op16_srli_e | op16_srai_e;
-  reg [4:0] shamt;
-  always @(*)
-  case(1'b1)
-    op16_srli_e: shamt=inst_e[6:2];
-    op16_srai_e: shamt=inst_e[6:2];
-    op16_slli_e: shamt=inst_e[6:2];
-    op16_sb_e: shamt={inst_e[5], inst_e[6], 3'b0};
-    op16_sh_e: shamt={inst_e[5], 4'b0};
-    default: shamt=0; // sw, swsp, ...
-  endcase
+  reg shift_right_e;
+  reg [4:0] shamt_e;
+  always @(posedge clk) begin
+    if(reset | bubble_d) begin
+      shamt_e <= 0;
+      shift_right_e <= 0;
+    end else begin
+      case(1'b1)
+        op16_srli_d: shamt_e <= inst[6:2];
+        op16_srai_d: shamt_e <= inst[6:2];
+        op16_slli_d: shamt_e <= inst[6:2];
+        op16_sb_d: shamt_e <= {inst[5], inst[6], 3'b0};
+        op16_sh_d: shamt_e <= {inst[5], 4'b0};
+        default: shamt_e <= 0; // sw, swsp, ...
+      endcase
+      shift_right_e <= op16_srli_d | op16_srai_d;
+    end
+  end
 
   wire [31:0] regD_reversed = {<<{regD}};
-  wire signed [32:0] ishift = shift_right ? {regD[31] & op16_srai_e, regD} : {1'b0, regD_reversed};
-  wire [32:0] rshift = ishift >>> shamt;
+  wire signed [32:0] ishift = shift_right_e ? {regD[31] & op16_srai_e, regD} : {1'b0, regD_reversed};
+  wire [32:0] rshift = ishift >>> shamt_e;
   wire [31:0] rshift_reversed = {<<{rshift[31:0]}};
-  wire [31:0] oshift = shift_right ? rshift[31:0] : rshift_reversed;
+  wire [31:0] oshift = shift_right_e ? rshift[31:0] : rshift_reversed;
 
   assign aluX = (aluS & (
                     {32{op16_add_e | op16_sub_e | op16_addi_e
@@ -392,19 +397,20 @@ module minimax (
 
   assign aguX = aguA + aguB;
 
-  wire wb = ~(stall_e | bubble_e) & (op32_e | // writes microcode x1/ra
-             rack | // writes data
-             op16_jal_e | op16_jalr_e |   // writes x1/ra
-             op16_li_e | op16_lui_e |
-             op16_addi_e | op16_addi4spn_e | op16_addi16sp_e |
-             op16_andi_e | op16_mv_e | op16_add_e |
-             op16_and_e | op16_or_e | op16_xor_e | op16_sub_e |
-             op16_slli_e | op16_srli_e | op16_srai_e);
-
-  // Regs proc
+  // Register file
+  reg wb;
   always @(posedge clk) begin
+    wb <= ~reset & (
+      op32_d |
+      op16_jal_d | op16_jalr_d |   // writes x1/ra
+      op16_li_d | op16_lui_d |
+      op16_addi_d | op16_addi4spn_d | op16_addi16sp_d |
+      op16_andi_d | op16_mv_d | op16_add_d |
+      op16_and_d | op16_or_d | op16_xor_d | op16_sub_d |
+      op16_slli_d | op16_srli_d | op16_srai_d);
+
     // writeback
-    if (|(addrD[4:0]) & wb) begin
+    if (|(addrD[4:0]) & ~(stall_e | bubble_e) & (wb | rack)) begin
       register_file[addrD] <= aluX;
     end
   end
@@ -502,14 +508,14 @@ module minimax (
         $write (" B");
         if(bubble_d) $write("D");
         if(bubble_e) $write("E");
-      end;
+      end
 
       if(stall_f | stall_d | stall_e) begin
         $write (" S");
         if(stall_f) $write("F");
         if(stall_d) $write("D");
         if(stall_e) $write("E");
-      end;
+      end
 
       if(dest_abs) $write(" DA");
       if(dest_next) $write(" DN");
@@ -528,10 +534,6 @@ module minimax (
         $write(" ADDR=%0h", addr);
       end
       if(rack) $write(" RACK");
-      if(|addrD_port_lookahead)
-        $write(" Dla=%0h", addrD_port_lookahead);
-      if(|addrS_port_lookahead)
-        $write(" Sla=%0h", addrS_port_lookahead);
 
       $display("");
     end
