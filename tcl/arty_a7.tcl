@@ -1,10 +1,10 @@
 #!/usr/bin/env -S vivado -mode batch -source
 
-create_project arty_a7_vhdl arty_a7_vhdl -part "xc7a35t-csg324-1"
+create_project arty_a7 arty_a7 -part "xc7a35t-csg324-1"
 
 # RTL Sources
 read_vhdl -vhdl2008 [file normalize "../rtl/blinker.vhd"]
-read_vhdl -vhdl2008 [file normalize "../rtl/minimax.vhd"]
+read_verilog -sv [file normalize "../rtl/minimax.v"]
 set_property top blinker [current_fileset]
 
 # Blinker assembly
