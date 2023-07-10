@@ -14,11 +14,9 @@ entity blinker is port (
 end blinker;
 
 architecture behav of blinker is
-	signal clk_50mhz : std_logic;
-
 	signal inst_addr : std_logic_vector(11 downto 0);
 	signal inst : std_logic_vector(15 downto 0);
-	signal inst_regce : std_logic;
+	signal inst_ce : std_logic;
 
 	signal addr, wdata : std_logic_vector(31 downto 0);
 	signal rdata : std_logic_vector(31 downto 0) := (others => '0');
@@ -26,15 +24,6 @@ architecture behav of blinker is
 	signal rreq : std_logic;
 	signal rack : std_logic := '0';
 begin
-	-- On 7-series FPGAs, we do not close timing at 100 MHz.
-	clkbuf : bufr
-	generic map (BUFR_DIVIDE => "2")
-	port map (
-		I => clk_100mhz,
-		O => clk_50mhz,
-		CE => '1',
-		CLR => '0');
-
 	rom : xpm_memory_tdpram
 	generic map (
 		ADDR_WIDTH_A => 11,
@@ -53,7 +42,7 @@ begin
 		MESSAGE_CONTROL => 0,
 		READ_DATA_WIDTH_A => 16,
 		READ_DATA_WIDTH_B => 32,
-		READ_LATENCY_A => 2,
+		READ_LATENCY_A => 1,
 		READ_LATENCY_B => 1,
 		READ_RESET_VALUE_A => "0",
 		READ_RESET_VALUE_B => "0",
@@ -74,18 +63,18 @@ begin
 		doutb => rdata,
 		addra => inst_addr(inst_addr'high downto 1),
 		addrb => addr(inst_addr'high downto 2),
-		clka => clk_50mhz,
-		clkb => clk_50mhz,
+		clka => clk_100mhz,
+		clkb => clk_100mhz,
 		dina => 16x"0",
 		dinb => wdata,
-		ena => '1',
+		ena => inst_ce,
 		enb => rreq,
 		injectdbiterra => '0',
 		injectdbiterrb => '0',
 		injectsbiterra => '0',
 		injectsbiterrb => '0',
-		regcea => inst_regce,
-		regceb => '1',
+		regcea => '0',
+		regceb => '0',
 		rsta => '0',
 		rstb => '0',
 		sleep => '0',
@@ -97,11 +86,11 @@ begin
 		PC_BITS => inst_addr'length,
 		UC_BASE => x"00000800")
 	port map (
-		clk => clk_50mhz,
+		clk => clk_100mhz,
 		reset => '0',
 		inst_addr => inst_addr,
+		inst_ce => inst_ce,
 		inst => inst,
-		inst_regce => inst_regce,
 		addr => addr,
 		wdata => wdata,
 		rdata => rdata,
@@ -110,9 +99,9 @@ begin
 		rack => rack);
 
 	-- Capture LED blinker
-	io_proc: process(clk_50mhz)
+	io_proc: process(clk_100mhz)
 	begin
-		if rising_edge(clk_50mhz) then
+		if rising_edge(clk_100mhz) then
 			rack <= rreq;
 
 			-- Writes to address 0xfffffffc address the LED

@@ -26,9 +26,9 @@ module minimax (
    input wire clk,
    input wire reset,
    input wire [15:0] inst,
+   output wire inst_ce,
    input wire [31:0] rdata,
    output wire[PC_BITS-1:0] inst_addr,
-   output wire inst_regce,
    output reg [31:0] addr,
    output reg [31:0] wdata,
    output reg [3:0] wmask,
@@ -44,102 +44,156 @@ module minimax (
   // Register file
   reg [31:0] register_file[63:0];
 
+  // Instruction register
+  reg [15:0] inst_e;
+
   // Register file address ports
   wire [5:0] addrS, addrD;
-  wire [4:0] addrD_port, addrS_port;
-  wire bD_banksel, bS_banksel;
+  reg [4:0] addrD_port, addrS_port;
+  reg bD_banksel, bS_banksel;
   wire [31:0] regS, regD, aluA, aluB, aluS, aluX;
 
-  // regP does into a byte permutation, producing regP
-  wire [1:0] selP0, selP1, selP2, selP3;
-  wire [31:0] regP;
-
   // Program counter
-  reg [PC_BITS-1:1] pc_fetch = {(PC_BITS-1){1'b0}};
-  reg [PC_BITS-1:1] pc_fetch_dly = {(PC_BITS-1){1'b0}};
-  reg [PC_BITS-1:1] pc_execute = {(PC_BITS-1){1'b0}};
+  reg [PC_BITS-1:1] pc_f = {(PC_BITS-1){1'b0}};
+  reg [PC_BITS-1:1] pc_d = {(PC_BITS-1){1'b0}};
+  reg [PC_BITS-1:1] pc_e = {(PC_BITS-1){1'b0}};
 
   // PC ALU output
   wire [PC_BITS-1:1] aguX, aguA, aguB;
 
-  // Track bubbles and execution inhibits through the pipeline.
-  reg bubble1 = 1'b1, bubble2 = 1'b1;
+  // Track bubbles and stalls through the pipeline.
+  reg bubble_d=1'b1, bubble_e = 1'b1;
+  wire stall_f, stall_d, stall_e;
+
   reg microcode = 1'b0;
-  wire bubble = bubble1 | bubble2 | data_stall;
 
-  // Deferred writeback address
-  reg [4:0] dra = 5'b0;
-
-  // Registers for multi-cycle 16-bit instructions
-  reg dly16_slli_setrd = 1'b0;
-  reg dly16_slli_setrs = 1'b0;
-  reg data_stall = 1'b0;
+  // Instruction strobes at fetch and decode cycles
+  logic op16_add_d, op16_add_e,
+    op16_addi_d, op16_addi_e,
+    op16_addi16sp_d, op16_addi16sp_e,
+    op16_addi4spn_d, op16_addi4spn_e,
+    op16_and_d, op16_and_e,
+    op16_andi_d, op16_andi_e,
+    op16_beqz_d, op16_beqz_e,
+    op16_bnez_d, op16_bnez_e,
+    op16_ebreak_d, op16_ebreak_e,
+    op16_j_d, op16_j_e,
+    op16_jal_d, op16_jal_e,
+    op16_jalr_d, op16_jalr_e,
+    op16_jr_d, op16_jr_e,
+    op16_li_d, op16_li_e,
+    op16_lui_d, op16_lui_e,
+    op16_lw_d, op16_lw_e,
+    op16_lwsp_d, op16_lwsp_e,
+    op16_mv_d, op16_mv_e,
+    op16_or_d, op16_or_e,
+    op16_sb_d, op16_sb_e,
+    op16_sh_d, op16_sh_e,
+    op16_slli_d, op16_slli_e,
+    op16_slli_setrd_d, op16_slli_setrd_e,
+    op16_slli_setrs_d, op16_slli_setrs_e,
+    op16_slli_thunk_d, op16_slli_thunk_e,
+    op16_srai_d, op16_srai_e,
+    op16_srli_d, op16_srli_e,
+    op16_sub_d, op16_sub_e,
+    op16_sw_d, op16_sw_e,
+    op16_swsp_d, op16_swsp_e,
+    op16_xor_d, op16_xor_e,
+    op32_d, op32_e;
 
   // Opcode masks for 16-bit instructions
-  wire [15:0] inst_type_masked     = inst & 16'b111_0_00000_00000_11;
-  wire [15:0] inst_type_masked_zcb = inst & 16'b111_1_11000_00000_11;
-  wire [15:0] inst_type_masked_i16 = inst & 16'b111_0_11111_00000_11;
-  wire [15:0] inst_type_masked_sr  = inst & 16'b111_1_11000_11111_11;
-  wire [15:0] inst_type_masked_and = inst & 16'b111_0_11000_00000_11;
-  wire [15:0] inst_type_masked_op  = inst & 16'b111_0_11000_11000_11;
-  wire [15:0] inst_type_masked_j   = inst & 16'b111_1_00000_11111_11;
-  wire [15:0] inst_type_masked_mj  = inst & 16'b111_1_00000_00000_11;
+  wire [15:0] inst_type_masked_d     = inst & 16'b111_0_00000_00000_11;
+  wire [15:0] inst_type_masked_zcb_d = inst & 16'b111_1_11000_00000_11;
+  wire [15:0] inst_type_masked_i16_d = inst & 16'b111_0_11111_00000_11;
+  wire [15:0] inst_type_masked_and_d = inst & 16'b111_0_11000_00000_11;
+  wire [15:0] inst_type_masked_op_d  = inst & 16'b111_0_11000_11000_11;
+  wire [15:0] inst_type_masked_j_d   = inst & 16'b111_1_00000_11111_11;
+  wire [15:0] inst_type_masked_mj_d  = inst & 16'b111_1_00000_00000_11;
 
-  // From 16.8 (RVC Instruction Set Listings)
-  wire op16_addi4spn   = (inst_type_masked     == 16'b000_0_00000_00000_00) & ~bubble;
-  wire op16_lw         = (inst_type_masked     == 16'b010_0_00000_00000_00) & ~bubble;
-  wire op16_sw         = (inst_type_masked     == 16'b110_0_00000_00000_00) & ~bubble;
-  wire op16_sb         = (inst_type_masked_zcb == 16'b100_0_10000_00000_00) & ~bubble;
-  wire op16_sh         = (inst_type_masked_zcb == 16'b100_0_11000_00000_00) & ~bubble;
+  // One-hot decode flags for different instruction types.
+  assign op16_addi4spn_d   = (inst_type_masked_d     == 16'b000_0_00000_00000_00);
+  assign op16_lw_d         = (inst_type_masked_d     == 16'b010_0_00000_00000_00);
+  assign op16_sw_d         = (inst_type_masked_d     == 16'b110_0_00000_00000_00);
+  assign op16_sb_d         = (inst_type_masked_zcb_d == 16'b100_0_10000_00000_00);
+  assign op16_sh_d         = (inst_type_masked_zcb_d == 16'b100_0_11000_00000_00);
 
-  wire op16_addi       = (inst_type_masked     == 16'b000_0_00000_00000_01) & ~bubble;
-  wire op16_jal        = (inst_type_masked     == 16'b001_0_00000_00000_01) & ~bubble;
-  wire op16_li         = (inst_type_masked     == 16'b010_0_00000_00000_01) & ~bubble;
-  wire op16_addi16sp   = (inst_type_masked_i16 == 16'b011_0_00010_00000_01) & ~bubble;
-  wire op16_lui        = (inst_type_masked     == 16'b011_0_00000_00000_01) & ~bubble & ~op16_addi16sp;
+  assign op16_addi_d       = (inst_type_masked_d     == 16'b000_0_00000_00000_01);
+  assign op16_jal_d        = (inst_type_masked_d     == 16'b001_0_00000_00000_01);
+  assign op16_li_d         = (inst_type_masked_d     == 16'b010_0_00000_00000_01);
+  assign op16_addi16sp_d   = (inst_type_masked_i16_d == 16'b011_0_00010_00000_01);
+  assign op16_lui_d        = (inst_type_masked_d     == 16'b011_0_00000_00000_01) & ~op16_addi16sp_d;
 
-  wire op16_srli       = (inst_type_masked_sr  == 16'b100_0_00000_00001_01) & ~bubble;
-  wire op16_srai       = (inst_type_masked_sr  == 16'b100_0_01000_00001_01) & ~bubble;
-  wire op16_andi       = (inst_type_masked_and == 16'b100_0_10000_00000_01) & ~bubble;
-  wire op16_sub        = (inst_type_masked_op  == 16'b100_0_11000_00000_01) & ~bubble;
-  wire op16_xor        = (inst_type_masked_op  == 16'b100_0_11000_01000_01) & ~bubble;
-  wire op16_or         = (inst_type_masked_op  == 16'b100_0_11000_10000_01) & ~bubble;
-  wire op16_and        = (inst_type_masked_op  == 16'b100_0_11000_11000_01) & ~bubble;
-  wire op16_j          = (inst_type_masked     == 16'b101_0_00000_00000_01) & ~bubble;
-  wire op16_beqz       = (inst_type_masked     == 16'b110_0_00000_00000_01) & ~bubble;
-  wire op16_bnez       = (inst_type_masked     == 16'b111_0_00000_00000_01) & ~bubble;
+  assign op16_srli_d       = (inst_type_masked_zcb_d == 16'b100_0_00000_00000_01);
+  assign op16_srai_d       = (inst_type_masked_zcb_d == 16'b100_0_01000_00000_01);
+  assign op16_andi_d       = (inst_type_masked_and_d == 16'b100_0_10000_00000_01);
+  assign op16_sub_d        = (inst_type_masked_op_d  == 16'b100_0_11000_00000_01);
+  assign op16_xor_d        = (inst_type_masked_op_d  == 16'b100_0_11000_01000_01);
+  assign op16_or_d         = (inst_type_masked_op_d  == 16'b100_0_11000_10000_01);
+  assign op16_and_d        = (inst_type_masked_op_d  == 16'b100_0_11000_11000_01);
+  assign op16_j_d          = (inst_type_masked_d     == 16'b101_0_00000_00000_01);
+  assign op16_beqz_d       = (inst_type_masked_d     == 16'b110_0_00000_00000_01);
+  assign op16_bnez_d       = (inst_type_masked_d     == 16'b111_0_00000_00000_01);
 
-  wire op16_slli       = (inst_type_masked_j   == 16'b000_0_00000_00001_10) & ~bubble;
-  wire op16_lwsp       = (inst_type_masked     == 16'b010_0_00000_00000_10) & ~bubble;
-  wire op16_jr         = (inst_type_masked_j   == 16'b100_0_00000_00000_10) & ~bubble;
-  wire op16_mv         = (inst_type_masked_mj  == 16'b100_0_00000_00000_10) & ~bubble & ~op16_jr;
-  wire op16_ebreak     = (inst                 == 16'b100_1_00000_00000_10) & ~bubble;
-  wire op16_jalr       = (inst_type_masked_j   == 16'b100_1_00000_00000_10) & ~bubble & ~op16_ebreak;
-  wire op16_add        = (inst_type_masked_mj  == 16'b100_1_00000_00000_10) & ~bubble & ~op16_jalr & ~ op16_ebreak;
-  wire op16_swsp       = (inst_type_masked     == 16'b110_0_00000_00000_10) & ~bubble;
+  assign op16_slli_d       = (inst_type_masked_mj_d  == 16'b000_0_00000_00000_10);
+  assign op16_lwsp_d       = (inst_type_masked_d     == 16'b010_0_00000_00000_10);
+  assign op16_jr_d         = (inst_type_masked_j_d   == 16'b100_0_00000_00000_10);
+  assign op16_mv_d         = (inst_type_masked_mj_d  == 16'b100_0_00000_00000_10) & ~op16_jr_d;
+  assign op16_ebreak_d     = (inst                   == 16'b100_1_00000_00000_10);
+  assign op16_jalr_d       = (inst_type_masked_j_d   == 16'b100_1_00000_00000_10) & ~op16_ebreak_d;
+  assign op16_add_d        = (inst_type_masked_mj_d  == 16'b100_1_00000_00000_10) & ~op16_jalr_d & ~op16_ebreak_d;
+  assign op16_swsp_d       = (inst_type_masked_d     == 16'b110_0_00000_00000_10);
 
   // Non-standard extensions to support microcode are permitted in these opcode gaps
-  wire op16_slli_setrd = (inst_type_masked_j   == 16'b000_1_00000_00001_10) & ~bubble;
-  wire op16_slli_setrs = (inst_type_masked_j   == 16'b000_1_00000_00010_10) & ~bubble;
-  wire op16_slli_thunk = (inst_type_masked_j   == 16'b000_1_00000_00100_10) & ~bubble;
+  assign op16_slli_setrd_d = (inst_type_masked_j_d   == 16'b000_1_00000_00001_10);
+  assign op16_slli_setrs_d = (inst_type_masked_j_d   == 16'b000_1_00000_00010_10);
+  assign op16_slli_thunk_d = (inst_type_masked_j_d   == 16'b000_1_00000_00100_10);
+  assign op32_d = &(inst[1:0]);
 
-  // Blanket matches for RVC and RV32I instructions
-  wire op32 =  &(inst[1:0]) & ~bubble;
-  wire op16 = ~&(inst[1:0]) & ~bubble;
+  always @(posedge clk) begin
+    if(~stall_e) begin
+      op16_add_e <= op16_add_d;
+      op16_addi_e <= op16_addi_d;
+      op16_addi16sp_e <= op16_addi16sp_d;
+      op16_addi4spn_e <= op16_addi4spn_d;
+      op16_and_e <= op16_and_d;
+      op16_andi_e <= op16_andi_d;
+      op16_beqz_e <= op16_beqz_d;
+      op16_bnez_e <= op16_bnez_d;
+      op16_ebreak_e <= op16_ebreak_d;
+      op16_j_e <= op16_j_d;
+      op16_jal_e <= op16_jal_d;
+      op16_jalr_e <= op16_jalr_d;
+      op16_jr_e <= op16_jr_d;
+      op16_li_e <= op16_li_d;
+      op16_lui_e <= op16_lui_d;
+      op16_lw_e <= op16_lw_d;
+      op16_lwsp_e <= op16_lwsp_d;
+      op16_mv_e <= op16_mv_d;
+      op16_or_e <= op16_or_d;
+      op16_sb_e <= op16_sb_d;
+      op16_sh_e <= op16_sh_d;
+      op16_slli_e <= op16_slli_d;
+      op16_slli_setrd_e <= op16_slli_setrd_d;
+      op16_slli_setrs_e <= op16_slli_setrs_d;
+      op16_slli_thunk_e <= op16_slli_thunk_d;
+      op16_srai_e <= op16_srai_d;
+      op16_srli_e <= op16_srli_d;
+      op16_sub_e <= op16_sub_d;
+      op16_sw_e <= op16_sw_d;
+      op16_swsp_e <= op16_swsp_d;
+      op16_xor_e <= op16_xor_d;
+      op32_e <= op32_d;
+    end
+  end
 
-  // Trap on unimplemented instructions
-  wire op32_trap = op32;
-
-  wire op16_trap = op16 & ~(
-      op16_addi4spn | op16_lw | op16_sw | op16_sh | op16_sb |
-      op16_addi | op16_jal | op16_li | op16_addi16sp | op16_lui |
-      op16_srli | op16_srai | op16_andi | op16_sub | op16_xor | op16_or | op16_and | op16_j | op16_beqz | op16_bnez |
-      op16_slli | op16_lwsp | op16_jr | op16_mv | op16_ebreak | op16_jalr | op16_add | op16_swsp |
-      op16_slli_setrd | op16_slli_setrs | op16_slli_thunk);
-
-  wire trap = op16_trap | op32_trap;
+  // Stall loads between rreq and rack
+  reg ld_stall = 0;
 
   // Data bus reads and writes are registered
+  assign stall_e = ~bubble_e & (op16_lw_e | op16_lwsp_e | ld_stall) & ~rack;
+  assign stall_d = stall_e & ~bubble_d;
+  assign stall_f = stall_e & ~bubble_d;
+
   always @(posedge clk) begin
     rreq <= 1'b0;
     addr <= 32'b0;
@@ -147,52 +201,65 @@ module minimax (
     wdata <= 32'b0;
 
     if(reset | rack) begin
-      data_stall <= 'b0;
-    end else if(op16_lw | op16_lwsp) begin
+      ld_stall <= 'b0;
+    end else if(~bubble_e & ~ld_stall & (op16_lw_e | op16_lwsp_e)) begin
       addr <= aluS;
-      data_stall <= 1'b1;
+      ld_stall <= 1'b1;
       rreq <= 1'b1;
-    end else if(op16_swsp | op16_sw | op16_sh | op16_sb) begin
+    end else if(~bubble_e & (op16_swsp_e | op16_sw_e | op16_sh_e | op16_sb_e)) begin
       addr <= aluS;
-      wmask <= {4{op16_swsp}} | {4{op16_sw}} |
-        {4{op16_sh}} & {{2{inst[5]}}, {2{~inst[5]}}} |
-        {4{op16_sb}} & {inst[6:5]==2'b11, inst[6:5]==2'b01, inst[6:5]==2'b10, inst[6:5]==2'b00};
-      wdata <= regP;
+      wmask <= {4{op16_swsp_e}} | {4{op16_sw_e}} |
+        {4{op16_sh_e}} & {{2{inst_e[5]}}, {2{~inst_e[5]}}} |
+        {4{op16_sb_e}} & {inst_e[6:5]==2'b11, inst_e[6:5]==2'b01, inst_e[6:5]==2'b10, inst_e[6:5]==2'b00};
+      wdata <= oshift;
     end
   end
 
   // Instruction bus outputs
-  assign inst_addr = {pc_fetch, 1'b0};
-  assign inst_regce = ~data_stall;
+  assign inst_addr = {pc_f, 1'b0};
+  assign inst_ce = ~stall_f;
 
   // PC logic
-  wire branch_taken = (op16_beqz & (~|regS)
-                | (op16_bnez & (|regS)))
-                | op16_j | op16_jal | op16_jr | op16_jalr
-                | op16_slli_thunk;
+  wire cond_taken = (op16_beqz_e & (~|regS) | (op16_bnez_e & (|regS)));
+  wire branch_taken = cond_taken | op16_j_e | op16_jal_e | op16_jr_e | op16_jalr_e;
+
+  wire dest_abs = ~bubble_e & (op32_e | op16_slli_thunk_e | op16_jr_e | op16_jalr_e);
+  wire dest_pcrel = ~bubble_e & (cond_taken | op16_j_e | op16_jal_e);
+  wire dest_next = ~dest_abs & ~dest_pcrel & ~stall_e;
 
   // Fetch Process
   always @(posedge clk) begin
 
-    // Instruction mis-fetches create a 2-cycle penalty
-    bubble2 <= reset | branch_taken | trap;
-    bubble1 <= bubble2;
-
     // Update fetch instruction unless bubbling
     if (reset) begin
-      pc_fetch <= 0;
-      pc_fetch_dly <= 0;
-      pc_execute <= 0;
-    end else if (~op16_lw & ~op16_lwsp & (rack | ~data_stall)) begin
-      pc_fetch <= aguX;
-      pc_fetch_dly <= pc_fetch;
-      pc_execute <= pc_fetch_dly;
+      pc_f <= 0;
+      pc_d <= 0;
+      pc_e <= 0;
+      bubble_d <= 1'b1;
+      bubble_e <= 1'b1;
+      microcode <= 1'b0;
+    end else begin
+      if(~stall_f)
+        pc_f <= aguX;
+
+      // Instruction mis-fetches create a 2-cycle penalty
+      if(~stall_d) begin
+        pc_d <= pc_f;
+        bubble_d <= ~bubble_e & ~dest_next;
+      end
+
+      if(~stall_e) begin
+        pc_e <= pc_d;
+        inst_e <= inst;
+        bubble_e <= (~bubble_e & ~dest_next) | bubble_d;
+
+        if(~bubble_e)
+          microcode <= (microcode | op32_e) & ~op16_slli_thunk_e;
+      end
     end
 
-    microcode <= (microcode | trap) & ~(reset | op16_slli_thunk);
-
 `ifdef ENABLE_ASSERTS
-    if (microcode & trap) begin
+    if (microcode & op32_e & ~bubble_e) begin
       $display("Double trap!");
       $stop;
     end
@@ -206,48 +273,60 @@ module minimax (
 
   end
 
-  // Datapath Process
+  // READ/WRITE register file port
+  reg [31:0] aluA_imm, aluB_imm;
   always @(posedge clk) begin
-    dly16_slli_setrs <= op16_slli_setrs;
-    dly16_slli_setrd <= op16_slli_setrd;
+    if(reset | bubble_d) begin
+      addrD_port <= 0;
+      addrS_port <= 0;
+      bD_banksel <= 0;
+      bS_banksel <= 0;
+      aluA_imm <= 0;
+      aluB_imm <= 0;
+    end else if(~stall_e) begin
+      addrD_port <=
+        (5'b00001 & {5{op16_jal_d | op16_jalr_d | op32_d}}) // write return address into ra
+        | (regD[4:0] & {5{op16_slli_setrd_e & ~bubble_e}})
+        | (inst[6:2] & {5{op16_swsp_d}})
+        | ({2'b01, inst[9:7]} & {5{op16_sub_d | op16_xor_d | op16_or_d | op16_and_d | op16_andi_d | op16_srli_d | op16_srai_d}})
+        | ({2'b01, inst[4:2]} & {5{op16_addi4spn_d | op16_sw_d | op16_sh_d | op16_sb_d | op16_lw_d}}) // data
+        | (inst[11:7] & ({5{op16_addi_d | op16_add_d
+            | (op16_mv_d & (~op16_slli_setrd_e | bubble_e))
+            | op16_addi16sp_d
+            | op16_slli_setrd_d | op16_slli_setrs_d
+            | op16_li_d | op16_lui_d
+            | op16_lwsp_d
+            | op16_slli_d}}));
 
-    // Load and setrs/setrd instructions complete a cycle after they are
-    // initiated, so we need to keep some state.
-    if(reset)
-      dra <= 5'h0;
-    else if(~bubble)
-      dra <= (regD[4:0] & ({5{op16_slli_setrd | op16_slli_setrs}}))
-           | ({2'b01, inst[4:2]} & {5{op16_lw}})
-           | (inst[11:7] & {5{op16_lwsp | op32}});
+      // READ-ONLY register file port
+      addrS_port <= (regD[4:0] & {5{op16_slli_setrs_e & ~bubble_e}})
+          | (5'b00010 & {5{op16_addi4spn_d | op16_lwsp_d | op16_swsp_d}})
+          | ({2'b01, inst[9:7]} & {5{op16_sw_d | op16_sh_d | op16_sb_d | op16_lw_d | op16_beqz_d | op16_bnez_d}})
+          | ({2'b01, inst[4:2]} & {5{op16_and_d | op16_or_d | op16_xor_d | op16_sub_d}})
+          | (inst[11:7] & {5{op16_jr_d | op16_jalr_d | op16_slli_thunk_d}}) // jump destination
+          | (inst[6:2] & {5{(op16_mv_d & (~op16_slli_setrs_e | bubble_e)) | op16_add_d}});
+
+      bD_banksel <= (microcode ^ (~bubble_e & op16_slli_setrd_e)) | op32_d;
+      bS_banksel <= (microcode ^ (~bubble_e & op16_slli_setrs_e)) | op32_d;
+
+      unique case(1'b1)
+        op16_addi4spn_d: aluA_imm <= {22'b0, inst[10:7], inst[12:11], inst[5], inst[6], 2'b0};
+        op16_swsp_d: aluA_imm <= {24'b0, inst[8:7], inst[12:9], 2'b0};
+        op16_lwsp_d: aluA_imm <= {24'b0, inst[3:2], inst[12], inst[6:4], 2'b0};
+        op16_lw_d | op16_sw_d: aluA_imm <= {25'b0, inst[5], inst[12:10], inst[6], 2'b0};
+	default: aluA_imm <= 0;
+      endcase
+
+      unique case(1'b1)
+	op16_addi_d | op16_andi_d | op16_li_d: aluB_imm <= {{27{inst[12]}}, inst[6:2]};
+	op16_lui_d: aluB_imm <= {{15{inst[12]}}, inst[6:2], 12'b0};
+        op16_addi16sp_d: aluB_imm <= {{23{inst[12]}}, inst[4:3], inst[5], inst[2], inst[6], 4'b0};
+	default: aluB_imm <= 0;
+      endcase
+    end
   end
 
-  // READ/WRITE register file port
-  assign addrD_port = (dra & {5{dly16_slli_setrd | rack}})
-    | (5'b00001 & {5{op16_jal | op16_jalr | trap}}) // write return address into ra
-    | ({2'b01, inst[4:2]} & {5{op16_addi4spn | op16_sw | op16_sh | op16_sb}}) // data
-    | (inst[6:2] & {5{op16_swsp}})
-    | (inst[11:7] & ({5{op16_addi | op16_add
-        | (op16_mv & ~dly16_slli_setrd)
-        | op16_addi16sp
-        | op16_slli_setrd | op16_slli_setrs
-        | op16_li | op16_lui
-        | op16_slli}}))
-    | ({2'b01, inst[9:7]} & {5{op16_sub
-        | op16_xor | op16_or | op16_and | op16_andi
-        | op16_srli | op16_srai}});
-
-  // READ-ONLY register file port
-  assign addrS_port = (dra & {5{dly16_slli_setrs}})
-      | (5'b00010 & {5{op16_addi4spn | op16_lwsp | op16_swsp}})
-      | (inst[11:7] & {5{op16_jr | op16_jalr | op16_slli_thunk | op16_slli}}) // jump destination
-      | ({2'b01, inst[9:7]} & {5{op16_sw | op16_sh | op16_sb | op16_lw | op16_beqz | op16_bnez}})
-      | ({2'b01, inst[4:2]} & {5{op16_and | op16_or | op16_xor | op16_sub}})
-      | (inst[6:2] & {5{(op16_mv & ~dly16_slli_setrs) | op16_add}});
-
   // Select between "normal" and "microcode" register banks.
-  assign bD_banksel = (microcode ^ dly16_slli_setrd) | trap;
-  assign bS_banksel = (microcode ^ dly16_slli_setrs) | trap;
-
   assign addrD = {bD_banksel, addrD_port};
   assign addrS = {bS_banksel, addrS_port};
 
@@ -255,77 +334,83 @@ module minimax (
   assign regD = register_file[addrD];
   assign regS = register_file[addrS];
 
-  // RegD goes straight into a set of byte-select multiplexers to produce
-  // regP. These are currently used for Zcb's c.sb/c.sh instructions, but can
-  // also be used for coarse shifts or rotates.
-  assign regP[7:0]   = selP0[1] ? (selP0[0] ? regD[31:24] : regD[23:16]) : (selP0[0] ? regD[15:8] : regD[7:0]);
-  assign regP[15:8]  = selP1[1] ? (selP1[0] ? regD[31:24] : regD[23:16]) : (selP1[0] ? regD[15:8] : regD[7:0]);
-  assign regP[23:16] = selP2[1] ? (selP2[0] ? regD[31:24] : regD[23:16]) : (selP2[0] ? regD[15:8] : regD[7:0]);
-  assign regP[31:24] = selP3[1] ? (selP3[0] ? regD[31:24] : regD[23:16]) : (selP3[0] ? regD[15:8] : regD[7:0]);
+  assign aluA = aluA_imm
+    | (regD & {32{op16_add_e | op16_addi_e | op16_sub_e
+                | op16_and_e | op16_andi_e
+                | op16_or_e | op16_xor_e
+                | op16_addi16sp_e}});
 
-  assign selP0 = 2'b00;
-  assign selP1 = (2'b01 & {2{~op16_sb}});
-  assign selP2 = (2'b10 & {2{~(op16_sb | op16_sh)}});
-  assign selP3 = (2'b01 & {2{op16_sh}}) | (2'b11 & ~{2{op16_sb | op16_sh}});
-
-  // aluA skips the permutation on regP and takes the register-file output
-  // directly.
-  assign aluA = (regD & {32{op16_add | op16_addi | op16_sub
-                    | op16_and | op16_andi
-                    | op16_or | op16_xor
-                    | op16_addi16sp
-                    | op16_slli | op16_srli | op16_srai}})
-          | ({22'b0, inst[10:7], inst[12:11], inst[5], inst[6], 2'b0} & {32{op16_addi4spn}})
-          | ({24'b0, inst[8:7], inst[12:9], 2'b0} & {32{op16_swsp}})
-          | ({24'b0, inst[3:2], inst[12], inst[6:4], 2'b0} & {32{op16_lwsp}})
-          | ({25'b0, inst[5], inst[12:10], inst[6], 2'b0} & {32{op16_lw | op16_sw}});
-
-  assign aluB = regS
-          | ({{27{inst[12]}}, inst[6:2]} & {32{op16_addi | op16_andi | op16_li}})
-          | ({{15{inst[12]}}, inst[6:2], 12'b0} & {32{op16_lui}})
-          | ({{23{inst[12]}}, inst[4:3], inst[5], inst[2], inst[6], 4'b0} & {32{op16_addi16sp}});
+  assign aluB = aluB_imm | regS;
 
   // This synthesizes into 4 CARRY8s - no need for manual xor/cin heroics
-  assign aluS = op16_sub ? (aluA - aluB) : (aluA + aluB);
+  assign aluS = op16_sub_e ? (aluA - aluB) : (aluA + aluB);
+
+  // Full shifter: uses a single shift operator, with bit reversal to handle
+  // c.slli, c.srli, and c.srai.
+  reg shift_right_e;
+  reg [4:0] shamt_e;
+  always @(posedge clk) begin
+    if(reset | bubble_d) begin
+      shamt_e <= 0;
+      shift_right_e <= 0;
+    end else begin
+      case(1'b1)
+        op16_srli_d: shamt_e <= inst[6:2];
+        op16_srai_d: shamt_e <= inst[6:2];
+        op16_slli_d: shamt_e <= inst[6:2];
+        op16_sb_d: shamt_e <= {inst[5], inst[6], 3'b0};
+        op16_sh_d: shamt_e <= {inst[5], 4'b0};
+        default: shamt_e <= 0; // sw, swsp, ...
+      endcase
+      shift_right_e <= op16_srli_d | op16_srai_d;
+    end
+  end
+
+  wire [31:0] regD_reversed = {<<{regD}};
+  wire signed [32:0] ishift = shift_right_e ? {regD[31] & op16_srai_e, regD} : {1'b0, regD_reversed};
+  wire [32:0] rshift = ishift >>> shamt_e;
+  wire [31:0] rshift_reversed = {<<{rshift[31:0]}};
+  wire [31:0] oshift = shift_right_e ? rshift[31:0] : rshift_reversed;
 
   assign aluX = (aluS & (
-                    {32{op16_add | op16_sub | op16_addi
-                      | op16_li | op16_lui
-                      | op16_addi4spn | op16_addi16sp
-                      | op16_slli}})) |
-          ({op16_srai & aluA[31], aluA[31:1]} & {32{op16_srai | op16_srli}}) |
-          ((aluA & aluB) & {32{op16_andi | op16_and}}) |
-          ((aluA ^ aluB) & {32{op16_xor}}) |
-          ((aluA | aluB) & {32{op16_or | op16_mv}}) |
+                    {32{op16_add_e | op16_sub_e | op16_addi_e
+                      | op16_li_e | op16_lui_e
+                      | op16_addi4spn_e | op16_addi16sp_e}})) |
+          ((aluA & aluB) & {32{op16_andi_e | op16_and_e}}) |
+          (oshift & {32{op16_slli_e | op16_srai_e | op16_srli_e}}) |
+          ((aluA ^ aluB) & {32{op16_xor_e}}) |
+          ((aluA | aluB) & {32{op16_or_e | op16_mv_e}}) |
           (rdata & {32{rack}}) |
-          ({{(32-PC_BITS){1'b0}}, pc_fetch_dly[PC_BITS-1:1], 1'b0} & {32{op16_jal | op16_jalr | trap}}); //  instruction following the jump (hence _dly)
+          ({{(32-PC_BITS){1'b0}}, pc_d[PC_BITS-1:1], 1'b0} & {32{op16_jal_e | op16_jalr_e | op32_e}}); //  instruction following the jump
 
   // Address Generation Unit (AGU)
-  assign aguA = (pc_fetch & ~{(PC_BITS-1){trap | branch_taken}})
-        | (pc_execute & {(PC_BITS-1){branch_taken}} & ~{(PC_BITS-1){op16_jr | op16_jalr | op16_slli_thunk}});
+  assign aguA = (pc_f & {(PC_BITS-1){dest_next}})
+        | (pc_e & {(PC_BITS-1){dest_pcrel}});
 
-  assign aguB = (regS[PC_BITS-1:1] & {(PC_BITS-1){op16_jr | op16_jalr | op16_slli_thunk}})
-        | ({{(PC_BITS-11){inst[12]}}, inst[8], inst[10:9], inst[6], inst[7], inst[2], inst[11], inst[5:3]}
-              & {(PC_BITS-1){branch_taken & (op16_j | op16_jal)}})
-        | ({{(PC_BITS-8){inst[12]}}, inst[6:5], inst[2], inst[11:10], inst[4:3]}
-              & {(PC_BITS-1){branch_taken & (op16_bnez | op16_beqz)}})
-        | (uc_base[PC_BITS-1:1] & {(PC_BITS-1){trap}});
+  assign aguB = (regS[PC_BITS-1:1] & {(PC_BITS-1){~bubble_e & dest_abs}})
+        | ({{(PC_BITS-11){inst_e[12]}}, inst_e[8], inst_e[10:9], inst_e[6], inst_e[7], inst_e[2], inst_e[11], inst_e[5:3]}
+              & {(PC_BITS-1){~bubble_e & (op16_j_e | op16_jal_e)}})
+        | ({{(PC_BITS-8){inst_e[12]}}, inst_e[6:5], inst_e[2], inst_e[11:10], inst_e[4:3]}
+              & {(PC_BITS-1){~bubble_e & cond_taken}})
+        | (uc_base[PC_BITS-1:1] & {(PC_BITS-1){~bubble_e & op32_e}})
+        | {{(PC_BITS-2){1'b0}}, dest_next};
 
-  assign aguX = (aguA + aguB) + {{(PC_BITS-2){1'b0}}, ~(branch_taken | rreq | trap)};
+  assign aguX = aguA + aguB;
 
-  wire wb = trap |                  // writes microcode x1/ra
-             rack | // writes data
-             op16_jal | op16_jalr |   // writes x1/ra
-             op16_li | op16_lui |
-             op16_addi | op16_addi4spn | op16_addi16sp |
-             op16_andi | op16_mv | op16_add |
-             op16_and | op16_or | op16_xor | op16_sub |
-             op16_slli | op16_srli | op16_srai;
-
-  // Regs proc
+  // Register file
+  reg wb;
   always @(posedge clk) begin
+    wb <= ~reset & (
+      op32_d |
+      op16_jal_d | op16_jalr_d |   // writes x1/ra
+      op16_li_d | op16_lui_d |
+      op16_addi_d | op16_addi4spn_d | op16_addi16sp_d |
+      op16_andi_d | op16_mv_d | op16_add_d |
+      op16_and_d | op16_or_d | op16_xor_d | op16_sub_d |
+      op16_slli_d | op16_srli_d | op16_srai_d);
+
     // writeback
-    if (|(addrD[4:0]) & wb) begin
+    if (|(addrD[4:0]) & ~(stall_e | bubble_e) & (wb | rack)) begin
       register_file[addrD] <= aluX;
     end
   end
@@ -334,23 +419,22 @@ module minimax (
 `ifdef ENABLE_TRACE
   initial begin
       $display(
-          "  FETCH1"
-        , "   FETCH2"
-        , "  EXECUTE"
-        , "     aguA"
-        , "     aguB"
-        , "     aguX"
-        , "     INST"
-        , " OPCODE  "
-        , " addrD"
-        , " addrS"
-        , "     regD"
-        , "     regS"
-        , "     aluA"
-        , "     aluB"
-        , "     aluS"
-        , "     aluX"
-        , " FLAGS");
+          "PC_FETCH|"
+        , "  PC_DECODE    |"
+        , "  PC_EXEC      |"
+        , "   aguA |"
+        , "   aguB |"
+        , "   aguX |"
+        , " OPCODE |"
+        , "addrD|"
+        , "addrS|"
+        , "  regD  |"
+        , "  regS  |"
+        , "  aluA  |"
+        , "  aluB  |"
+        , "  aluS  |"
+        , "  aluX  |"
+        , "FLAGS");
   end
 
   // This register can be viewed in the resulting VCD file by setting
@@ -358,48 +442,49 @@ module minimax (
   reg [8*8-1:0] opcode;
 
   always @(posedge clk) begin
-      $write("%8H ", {pc_fetch, 1'b0});
-      $write("%8H ", {pc_fetch_dly, 1'b0});
-      $write("%8H ", {pc_execute, 1'b0});
+      $write("%8H ", {pc_f, 1'b0});
+      $write("%8H ", {pc_d, 1'b0});
+      $write("(%4H) ", inst);
+      $write("%8H ", {pc_e, 1'b0});
+      $write("(%4H) ", inst_e);
       $write("%8H ", {aguA, 1'b0});
       $write("%8H ", {aguB, 1'b0});
       $write("%8H ", {aguX, 1'b0});
-      $write("%8H ", inst);
 
-      if(op16_addi4spn)        begin $write("ADDI4SPN"); opcode = "ADDI4SPN"; end
-      else if(op16_lw)         begin $write("LW      "); opcode = "LW      "; end
-      else if(op16_sw)         begin $write("SW      "); opcode = "SW      "; end
-      else if(op16_sb)         begin $write("SB      "); opcode = "SB      "; end
-      else if(op16_sh)         begin $write("SH      "); opcode = "SH      "; end
-      else if(op16_addi)       begin $write("ADDI    "); opcode = "ADDI    "; end
-      else if(op16_jal)        begin $write("JAL     "); opcode = "JAL     "; end
-      else if(op16_li)         begin $write("LI      "); opcode = "LI      "; end
-      else if(op16_addi16sp)   begin $write("ADDI16SP"); opcode = "ADDI16SP"; end
-      else if(op16_lui)        begin $write("LUI     "); opcode = "LUI     "; end
-      else if(op16_srli)       begin $write("SRLI    "); opcode = "SRLI    "; end
-      else if(op16_srai)       begin $write("SRAI    "); opcode = "SRAI    "; end
-      else if(op16_andi)       begin $write("ANDI    "); opcode = "ANDI    "; end
-      else if(op16_sub)        begin $write("SUB     "); opcode = "SUB     "; end
-      else if(op16_xor)        begin $write("XOR     "); opcode = "XOR     "; end
-      else if(op16_or)         begin $write("OR      "); opcode = "OR      "; end
-      else if(op16_and)        begin $write("AND     "); opcode = "AND     "; end
-      else if(op16_j)          begin $write("J       "); opcode = "J       "; end
-      else if(op16_beqz)       begin $write("BEQZ    "); opcode = "BEQZ    "; end
-      else if(op16_bnez)       begin $write("BNEZ    "); opcode = "BNEZ    "; end
-      else if(op16_slli)       begin $write("SLLI    "); opcode = "SLLI    "; end
-      else if(op16_lwsp)       begin $write("LWSP    "); opcode = "LWSP    "; end
-      else if(op16_jr)         begin $write("JR      "); opcode = "JR      "; end
-      else if(op16_mv)         begin $write("MV      "); opcode = "MV      "; end
-      else if(op16_ebreak)     begin $write("EBREAK  "); opcode = "EBREAK  "; end
-      else if(op16_jalr)       begin $write("JALR    "); opcode = "JALR    "; end
-      else if(op16_add)        begin $write("ADD     "); opcode = "ADD     "; end
-      else if(op16_swsp)       begin $write("SWSP    "); opcode = "SWSP    "; end
-      else if(op16_slli_thunk) begin $write("THUNK   "); opcode = "THUNK   "; end
-      else if(op16_slli_setrd) begin $write("SETRD   "); opcode = "SETRD   "; end
-      else if(op16_slli_setrs) begin $write("SETRS   "); opcode = "SETRS   "; end
-      else if(op32)            begin $write("RV32I   "); opcode = "RV32I   "; end
-      else if(bubble)          begin $write("BUBBLE  "); opcode = "BUBBLE  "; end
-      else                     begin $write("NOP?    "); opcode = "NOP?    "; end
+      if(bubble_e)               begin $write("BUBBLE  "); opcode = "BUBBLE  "; end
+      else if(op16_addi4spn_e)   begin $write("ADDI4SPN"); opcode = "ADDI4SPN"; end
+      else if(op16_lw_e)         begin $write("LW      "); opcode = "LW      "; end
+      else if(op16_sw_e)         begin $write("SW      "); opcode = "SW      "; end
+      else if(op16_sb_e)         begin $write("SB      "); opcode = "SB      "; end
+      else if(op16_sh_e)         begin $write("SH      "); opcode = "SH      "; end
+      else if(op16_addi_e)       begin $write("ADDI    "); opcode = "ADDI    "; end
+      else if(op16_jal_e)        begin $write("JAL     "); opcode = "JAL     "; end
+      else if(op16_li_e)         begin $write("LI      "); opcode = "LI      "; end
+      else if(op16_addi16sp_e)   begin $write("ADDI16SP"); opcode = "ADDI16SP"; end
+      else if(op16_lui_e)        begin $write("LUI     "); opcode = "LUI     "; end
+      else if(op16_srli_e)       begin $write("SRLI    "); opcode = "SRLI    "; end
+      else if(op16_srai_e)       begin $write("SRAI    "); opcode = "SRAI    "; end
+      else if(op16_andi_e)       begin $write("ANDI    "); opcode = "ANDI    "; end
+      else if(op16_sub_e)        begin $write("SUB     "); opcode = "SUB     "; end
+      else if(op16_xor_e)        begin $write("XOR     "); opcode = "XOR     "; end
+      else if(op16_or_e)         begin $write("OR      "); opcode = "OR      "; end
+      else if(op16_and_e)        begin $write("AND     "); opcode = "AND     "; end
+      else if(op16_j_e)          begin $write("J       "); opcode = "J       "; end
+      else if(op16_beqz_e)       begin $write("BEQZ    "); opcode = "BEQZ    "; end
+      else if(op16_bnez_e)       begin $write("BNEZ    "); opcode = "BNEZ    "; end
+      else if(op16_slli_e)       begin $write("SLLI    "); opcode = "SLLI    "; end
+      else if(op16_lwsp_e)       begin $write("LWSP    "); opcode = "LWSP    "; end
+      else if(op16_jr_e)         begin $write("JR      "); opcode = "JR      "; end
+      else if(op16_mv_e)         begin $write("MV      "); opcode = "MV      "; end
+      else if(op16_ebreak_e)     begin $write("EBREAK  "); opcode = "EBREAK  "; end
+      else if(op16_jalr_e)       begin $write("JALR    "); opcode = "JALR    "; end
+      else if(op16_add_e)        begin $write("ADD     "); opcode = "ADD     "; end
+      else if(op16_swsp_e)       begin $write("SWSP    "); opcode = "SWSP    "; end
+      else if(op16_slli_thunk_e) begin $write("THUNK   "); opcode = "THUNK   "; end
+      else if(op16_slli_setrd_e) begin $write("SETRD   "); opcode = "SETRD   "; end
+      else if(op16_slli_setrs_e) begin $write("SETRS   "); opcode = "SETRS   "; end
+      else if(op32_e)            begin $write("RV32I   "); opcode = "RV32I   "; end
+      else                       begin $write("NOP?    "); opcode = "NOP?    "; end
 
       $write("  %1b.%2H", addrD[5], addrD[4:0]);
       $write("  %1b.%2H", addrS[5], addrS[4:0]);
@@ -412,24 +497,33 @@ module minimax (
       $write(" %8H", aluS);
       $write(" %8H", aluX);
 
-      if(trap) begin
+      if(op32_e) begin
         $write(" TRAP");
       end
-      if(branch_taken) begin
+      if(cond_taken) begin
         $write(" TAKEN");
       end
-      if(bubble) begin
-        $write(" BUBBLE");
+
+      if(bubble_d | bubble_e) begin
+        $write (" B");
+        if(bubble_d) $write("D");
+        if(bubble_e) $write("E");
       end
-      if(wb) begin
-        $write(" WB");
+
+      if(stall_f | stall_d | stall_e) begin
+        $write (" S");
+        if(stall_f) $write("F");
+        if(stall_d) $write("D");
+        if(stall_e) $write("E");
       end
-      if(reset) begin
-        $write(" RESET");
-      end
-      if(microcode) begin
-        $write(" MCODE");
-      end
+
+      if(dest_abs) $write(" DA");
+      if(dest_next) $write(" DN");
+      if(dest_pcrel) $write(" DP");
+
+      if(wb) $write(" WB");
+      if(reset) $write(" RESET");
+      if(microcode) $write(" MCODE");
       if(| wmask) begin
         $write(" WMASK=%0h", wmask);
         $write(" ADDR=%0h", addr);
@@ -439,15 +533,8 @@ module minimax (
         $write(" RREQ");
         $write(" ADDR=%0h", addr);
       end
-      if(| dra) begin
-        $write(" @DRA=%0h", dra);
-      end
-      if(~inst_regce) begin
-        $write(" ~REGCE");
-      end
-      if(rack) begin
-        $write(" RACK");
-      end
+      if(rack) $write(" RACK");
+
       $display("");
     end
 `endif // `ifdef ENABLE_TRACE
