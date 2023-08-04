@@ -99,158 +99,30 @@ microcode_entry:
 1:	c.mv x4, x8
 	c.j op32_entry
 
-srai_dyn: /* jump table POE. Trashes x15 */
-	c.li x15, 16
-	c.slli x15, 1 /* Form 2*(32-x9) for the jump table */
-	c.sub x15, x9
-	c.slli x15, 1
-	c.mv x9, x15
+.macro dyn_shift op
+	/* shift 8 bits at a time until we can't */
+	c.mv x15, x9
+	c.srli x15, 3
+	c.beqz x15, 2f
 
-	/* Table jump */
-	c.mv x15, ra
-	c.jal .+2
-	c.addi ra, 8
-	c.add ra, x9
-	c.jalr ra
-	c.jr x15
+1:	\op x8, 8
+	c.addi x9, -8
+	c.addi x15, -1
+	c.bnez x15, 1b
 
-	/* JUMP TABLE - FORBIDDEN ZONE */
+2:	c.beqz x9, 4f /* maybe done? */
 
-srai32:	c.srai x8, 1
-srai31:	c.srai x8, 1
-srai30:	c.srai x8, 1
-srai29:	c.srai x8, 1
-srai28:	c.srai x8, 1
-srai27:	c.srai x8, 1
-srai26:	c.srai x8, 1
-srai25:	c.srai x8, 1
-srai24:	c.srai x8, 1
-srai23:	c.srai x8, 1
-srai22:	c.srai x8, 1
-srai21:	c.srai x8, 1
-srai20:	c.srai x8, 1
-srai19:	c.srai x8, 1
-srai18:	c.srai x8, 1
-srai17:	c.srai x8, 1
-srai16:	c.srai x8, 1
-srai15:	c.srai x8, 1
-srai14:	c.srai x8, 1
-srai13:	c.srai x8, 1
-srai12:	c.srai x8, 1
-srai11:	c.srai x8, 1
-srai10:	c.srai x8, 1
-srai9:	c.srai x8, 1
-srai8:	c.srai x8, 1
-srai7:	c.srai x8, 1
-srai6:	c.srai x8, 1
-srai5:	c.srai x8, 1
-srai4:	c.srai x8, 1
-srai3:	c.srai x8, 1
-srai2:	c.srai x8, 1
-srai1:	c.srai x8, 1
-	c.jr ra
+3:	/* now just loop bit-by-bit - slow, but compact and max 8 iters */
+	\op x8, 1
+	c.addi x9, -1
+	c.bnez x9, 3b
 
-srli_dyn: /* jump table POE. Trashes x15 */
-	c.li x15, 16
-	c.slli x15, 1 /* Form 2*(32-x9) for the jump table */
-	c.sub x15, x9
-	c.slli x15, 1
-	c.mv x9, x15
+4:	c.jr ra
+.endm
 
-	/* Table jump */
-	c.mv x15, ra
-	c.jal .+2
-	c.addi ra, 8
-	c.add ra, x9
-	c.jalr ra
-	c.jr x15
-
-	/* JUMP TABLE - FORBIDDEN ZONE */
-
-srli32:	c.srli x8, 1
-srli31:	c.srli x8, 1
-srli30:	c.srli x8, 1
-srli29:	c.srli x8, 1
-srli28:	c.srli x8, 1
-srli27:	c.srli x8, 1
-srli26:	c.srli x8, 1
-srli25:	c.srli x8, 1
-srli24:	c.srli x8, 1
-srli23:	c.srli x8, 1
-srli22:	c.srli x8, 1
-srli21:	c.srli x8, 1
-srli20:	c.srli x8, 1
-srli19:	c.srli x8, 1
-srli18:	c.srli x8, 1
-srli17:	c.srli x8, 1
-srli16:	c.srli x8, 1
-srli15:	c.srli x8, 1
-srli14:	c.srli x8, 1
-srli13:	c.srli x8, 1
-srli12:	c.srli x8, 1
-srli11:	c.srli x8, 1
-srli10:	c.srli x8, 1
-srli9:	c.srli x8, 1
-srli8:	c.srli x8, 1
-srli7:	c.srli x8, 1
-srli6:	c.srli x8, 1
-srli5:	c.srli x8, 1
-srli4:	c.srli x8, 1
-srli3:	c.srli x8, 1
-srli2:	c.srli x8, 1
-srli1:	c.srli x8, 1
-	c.jr ra
-
-slli_dyn: /* jump table POE. Trashes x15 */
-	c.li x15, 16
-	c.slli x15, 1 /* Form 2*(32-x9) for the jump table */
-	c.sub x15, x9
-	c.slli x15, 1
-	c.mv x9, x15
-
-	/* Table jump */
-	c.mv x15, ra
-	c.jal .+2
-	c.addi ra, 8
-	c.add ra, x9
-	c.jalr ra
-	c.jr x15
-
-	/* JUMP TABLE - FORBIDDEN ZONE */
-
-slli32:	c.slli x8, 1
-slli31:	c.slli x8, 1
-slli30:	c.slli x8, 1
-slli29:	c.slli x8, 1
-slli28:	c.slli x8, 1
-slli27:	c.slli x8, 1
-slli26:	c.slli x8, 1
-slli25:	c.slli x8, 1
-slli24:	c.slli x8, 1
-slli23:	c.slli x8, 1
-slli22:	c.slli x8, 1
-slli21:	c.slli x8, 1
-slli20:	c.slli x8, 1
-slli19:	c.slli x8, 1
-slli18:	c.slli x8, 1
-slli17:	c.slli x8, 1
-slli16:	c.slli x8, 1
-slli15:	c.slli x8, 1
-slli14:	c.slli x8, 1
-slli13:	c.slli x8, 1
-slli12:	c.slli x8, 1
-slli11:	c.slli x8, 1
-slli10:	c.slli x8, 1
-slli9:	c.slli x8, 1
-slli8:	c.slli x8, 1
-slli7:	c.slli x8, 1
-slli6:	c.slli x8, 1
-slli5:	c.slli x8, 1
-slli4:	c.slli x8, 1
-slli3:	c.slli x8, 1
-slli2:	c.slli x8, 1
-slli1:	c.slli x8, 1
-	c.jr ra
+srai_dyn: dyn_shift c.srai
+srli_dyn: dyn_shift c.srli
+slli_dyn: dyn_shift c.slli
 
 op32_entry:
 	c.mv x8, x4
