@@ -19,6 +19,12 @@
  * "little" RISC-V implementations you should probably use reach for first.)
  */
 
+/* TINY mode: strongly prefer size over regularity, even at the expense of
+ * "interesting" behaviour for unexpected instructions. Our goal is to maintain
+ * a functioning microcode build that fits in under 0x400 = 1024 bytes of ROM,
+ * allowing larger user programs to tuck into a finite amount of memory. */
+#define TINY
+
 /* "x.poke" write the value of an emulation-mode register into an user-mode
  * register. */
 .macro x.poke rd, rs
@@ -182,7 +188,11 @@ op32_entry:
 	c.j table0	/* 0: LOAD */
 	c.j .		/* 1: LOAD-FP */
 	c.j .		/* 2: custom-0 */
+#ifdef TINY
+	c.j ret_rv32	/* 3.0: FENCE is a noop */
+#else
 	c.j table3	/* 3: MISC-MEM */
+#endif
 	c.j table4	/* 4: OP-IMM */
 	c.j auipc	/* 5: AUIPC */
 	c.j .		/* 6: OP-IMM-32 */
@@ -207,10 +217,14 @@ op32_entry:
 	c.j jalr	/* 19: JALR */
 	c.j .		/* 1a: reserved */
 	c.j jal		/* 1b: JAL */
+#ifdef TINY
+	c.j ret_rv32	/* 1c: SYSTEM */
+#else
 	c.j table1c	/* 1c: SYSTEM */
 	c.j .		/* 1d: reserved */
 	c.j .		/* 1e: custom-3/rv128 */
 	c.j .		/* 1f: >=80b */
+#endif
 
 table0:
 	c.jal .+2
@@ -224,9 +238,12 @@ table0:
 	c.j .	/* 0.3: */
 	c.j lbu	/* 0.4: LBU */
 	c.j lhu	/* 0.5: LHU*/
+#ifndef TINY
 	c.j .	/* 0.6: */
 	c.j .	/* 0.7: */
+#endif
 
+#ifndef TINY
 table3:
 	c.jal .+2
 	c.addi ra, 6 /* offset to table base */
@@ -241,6 +258,7 @@ table3:
 	c.j .	/* 3.5: */
 	c.j .	/* 3.6: */
 	c.j .	/* 3.7: */
+#endif
 
 table4:
 	c.jal .+2
@@ -266,11 +284,13 @@ table8:
 	c.j sb	/* 8.0: SB */
 	c.j sh	/* 8.1: SH */
 	c.j sw	/* 8.2: SW */
+#ifndef TINY
 	c.j .	/* 8.3: */
 	c.j .	/* 8.4: */
 	c.j .	/* 8.5: */
 	c.j .	/* 8.6: */
 	c.j .	/* 8.7: */
+#endif
 
 tablec:
 	c.jal .+2
@@ -302,6 +322,7 @@ table18:
 	c.j bltu	/* 18.6: BLTU */
 	c.j bgeu	/* 18.7: BGEU */
 
+#ifndef TINY
 table1c:
 	c.jal .+2
 	c.addi ra, 6 /* offset to table base */
@@ -316,19 +337,18 @@ table1c:
 	c.j csrrwi	/* 1c.5: CSRRWI */
 	c.j csrrsi	/* 1c.6: CSRRSI */
 	c.j csrrci	/* 1c.7: CSRRCI */
+#endif
 
 lui:	c.mv x8, x4
 	c.srli x8, 12
 	c.slli x8, 12
-	x.poke 6, x8
-	c.j ret_rv32
+	c.j poke_ret_rv32
 
 auipc:	c.mv x8, x4
 	c.srli x8, 12
 	c.slli x8, 12
 	c.add x8, x3
-	x.poke 6, x8
-	c.j ret_rv32
+	c.j poke_ret_rv32
 
 /*
  * FIXME: loads do not gracefully handle misaligned addresses.
@@ -344,21 +364,18 @@ lb:	c.jal load_form_address
 	c.bnez x9, 2b
 
 3:	c.srai x8, 24
-	x.poke 6, x8
-	c.j ret_rv32
+	c.j poke_ret_rv32
 
 lh:	c.jal load_form_address
 	c.lw x8, 0(x8)
 	c.bnez x9, 1f
 	c.slli x8, 16
 1:	c.srai x8, 16
-	x.poke 6, x8
-	c.j ret_rv32
+	c.j poke_ret_rv32
 
 lw:	c.jal load_form_address
 	c.lw x8, 0(x8)
-	x.poke 6, x8
-	c.j ret_rv32
+	c.j poke_ret_rv32
 
 lbu:	c.jal load_form_address
 	c.lw x8, 0(x8)
@@ -370,8 +387,7 @@ lbu:	c.jal load_form_address
 	c.bnez x9, 2b
 
 3:	c.srli x8, 24
-	x.poke 6, x8
-	c.j ret_rv32
+	c.j poke_ret_rv32
 
 
 lhu:	c.jal load_form_address
@@ -379,8 +395,7 @@ lhu:	c.jal load_form_address
 	c.bnez x9, 1f
 	c.slli x8, 16
 1:	c.srli x8, 16
-	x.poke 6, x8
-	c.j ret_rv32
+	c.j poke_ret_rv32
 
 load_form_address:
 	c.mv x31, ra
@@ -462,6 +477,8 @@ sw:	c.mv x8, x4
 
 /* Placed here because c.bnez/c.beqz have limited range and are used in
  * relative branches */
+poke_ret_rv32:
+	x.poke 6, x8
 ret_rv32:
 	c.addi x3, 4
 	x.thunk 3
@@ -503,59 +520,55 @@ slt:
 	c.mv x8, x18
 	c.mv x9, x20
 	c.jal slt_func
-	x.poke 6, x8
-	c.j ret_rv32
+	c.j poke_ret_rv32
 
 sltu:
 	c.mv x8, x18
 	c.mv x9, x20
 	c.jal sltu_func
-	x.poke 6, x8
-	c.j ret_rv32
+	c.j poke_ret_rv32
 
 addi:	c.mv x8, x4
 	c.srai x8, 20
 	c.add x8, x18
-	x.poke 6, x8
-	c.j ret_rv32
+	c.j poke_ret_rv32
 
 andi:	c.mv x8, x4
 	c.srai x8, 20
 	c.mv x9, x18
 	c.and x8, x9
-	x.poke 6, x8
-	c.j ret_rv32
+	c.j poke_ret_rv32
 
 ori:	c.mv x8, x4
 	c.srai x8, 20
 	c.mv x9, x18
 	c.or x8, x9
-	x.poke 6, x8
-	c.j ret_rv32
+	c.j poke_ret_rv32
 
 xori:	c.mv x8, x4
 	c.srai x8, 20
 	c.mv x9, x18
 	c.xor x8, x9
-	x.poke 6, x8
-	c.j ret_rv32
+	c.j poke_ret_rv32
 
 slli_zip:
 	/* Set up operands */
 	c.mv x8, x18
 	c.mv x9, x19
-
+#ifndef TINY
 	/* Disambiguate based on funct7 */
 	c.mv x10, x21
 	c.beqz x10, 1f /* 0 => SLLI */
 	c.addi x10, -4
 	c.beqz x10, zip /* 4 -> Zbkb zip */
+#endif
 
 1:	c.jal slli_dyn
-	x.poke 6, x8
-	c.j ret_rv32
+	c.j poke_ret_rv32
 
+#ifndef TINY
 zip:	c.j . /* unimplemented */
+#endif
 
 srli_srai_unzip:
 	/* Set up operands */
@@ -565,6 +578,9 @@ srli_srai_unzip:
 	/* disambiguate based on funct7 */
 	c.mv x10, x21
 	c.beqz x10, 1f /* 0 -> SRLI */
+#ifdef TINY
+	c.j 2f
+#else
 	c.addi x10, -32
 	c.beqz x10, 2f /* 32 -> SRAI */
 	c.mv x10, x21
@@ -572,15 +588,15 @@ srli_srai_unzip:
 	c.beqz x10, unzip
 
 	c.j . /* unknown/unimplemented: bail */
+#endif
 
 1:	c.jal srli_dyn
-	x.poke 6, x8
-	c.j ret_rv32
+	c.j poke_ret_rv32
 
 2:	c.jal srai_dyn
-	x.poke 6, x8
-	c.j ret_rv32
+	c.j poke_ret_rv32
 
+#ifndef TINY
 unzip:
 	c.li x10, 0 /* even bits go here */
 	c.li x11, 0 /* odd bits go here */
@@ -609,8 +625,8 @@ unzip:
 	c.slli x8, 16
 	c.or x8, x10
 
-	x.poke 6, x8
-	c.j ret_rv32
+	c.j poke_ret_rv32
+#endif
 
 slti:
 	c.mv x8, x4
@@ -619,8 +635,7 @@ slti:
 
 	c.mv x8, x18
 	c.jal slt_func
-	x.poke 6, x8
-	c.j ret_rv32
+	c.j poke_ret_rv32
 
 sltiu:
 	c.mv x8, x4
@@ -629,8 +644,7 @@ sltiu:
 
 	c.mv x8, x18
 	c.jal sltu_func
-	x.poke 6, x8
-	c.j ret_rv32
+	c.j poke_ret_rv32
 
 bge:
 	c.mv x8, x18
@@ -730,16 +744,14 @@ add_sub:
 	c.addi x9, 1
 
 1:	c.add x8, x9
-	x.poke 6, x8
-	c.j ret_rv32
+	c.j poke_ret_rv32
 
 sll:
 	c.mv x8, x18
 	c.mv x9, x20
 	c.andi x9, 31
 	c.jal slli_dyn
-	x.poke 6, x8
-	c.j ret_rv32
+	c.j poke_ret_rv32
 
 srl_sra:
 	/* Cheat by leveraging srli_srai */
@@ -752,22 +764,19 @@ xor:
 	c.mv x8, x18
 	c.mv x9, x20
 	c.xor x8, x9
-	x.poke 6, x8
-	c.j ret_rv32
+	c.j poke_ret_rv32
 
 or:
 	c.mv x8, x18
 	c.mv x9, x20
 	c.or x8, x9
-	x.poke 6, x8
-	c.j ret_rv32
+	c.j poke_ret_rv32
 
 and:
 	c.mv x8, x18
 	c.mv x9, x20
 	c.and x8, x9
-	x.poke 6, x8
-	c.j ret_rv32
+	c.j poke_ret_rv32
 
 jalr:
 	/* Save pc+4 to rd */
@@ -852,6 +861,7 @@ resolve_imm1:
 
 	c.jr x31
 
+#ifndef TINY
 	/* CSRs are no-ops for now. */
 csrrw:	c.j ret_rv32
 csrrs:	c.j ret_rv32
@@ -859,3 +869,4 @@ csrrc:	c.j ret_rv32
 csrrwi:	c.j ret_rv32
 csrrsi:	c.j ret_rv32
 csrrci:	c.j ret_rv32
+#endif
