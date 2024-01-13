@@ -1,4 +1,4 @@
-#!/usr/bin/env -S vivado -mode batch -source
+#!/usr/bin/Vivado/2019.1/bin -S vivado -mode batch -source
 
 create_project arty_a7 arty_a7 -part "xc7a35t-csg324-1"
 

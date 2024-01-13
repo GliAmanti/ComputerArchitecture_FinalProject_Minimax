@@ -14,6 +14,9 @@ entity blinker is port (
 end blinker;
 
 architecture behav of blinker is
+	constant clk_period : time := 20 ns;
+	signal CLK : std_logic := '0';									--added
+	signal rst : std_logic := '1';									--added
 	signal inst_addr : std_logic_vector(11 downto 0);
 	signal inst : std_logic_vector(15 downto 0);
 	signal inst_ce : std_logic;
@@ -24,6 +27,7 @@ architecture behav of blinker is
 	signal rreq : std_logic;
 	signal rack : std_logic := '0';
 begin
+	CLK <= not CLK after clk_period/2;								--added
 	rom : xpm_memory_tdpram
 	generic map (
 		ADDR_WIDTH_A => 11,
@@ -31,7 +35,7 @@ begin
 		AUTO_SLEEP_TIME => 0,
 		BYTE_WRITE_WIDTH_A => 16,
 		BYTE_WRITE_WIDTH_B => 32,
-		CASCADE_HEIGHT => 0,
+		--CASCADE_HEIGHT => 0,
 		CLOCKING_MODE => "common_clock",
 		ECC_MODE => "no_ecc",
 		MEMORY_INIT_FILE => "blink.mem",
@@ -48,16 +52,14 @@ begin
 		READ_RESET_VALUE_B => "0",
 		RST_MODE_A => "SYNC",
 		RST_MODE_B => "SYNC",
-		SIM_ASSERT_CHK => 0,
+		--SIM_ASSERT_CHK => 0,
 		USE_EMBEDDED_CONSTRAINT => 0,
 		USE_MEM_INIT => 1,
-		USE_MEM_INIT_MMI => 1,
 		WAKEUP_TIME => "disable_sleep",
 		WRITE_DATA_WIDTH_A => 16,
 		WRITE_DATA_WIDTH_B => 32,
 		WRITE_MODE_A => "no_change",
-		WRITE_MODE_B => "no_change",
-		WRITE_PROTECT => 1)
+		WRITE_MODE_B => "no_change")
 	port map (
 		douta => inst,
 		doutb => rdata,
@@ -86,7 +88,7 @@ begin
 		PC_BITS => inst_addr'length,
 		UC_BASE => x"00000800")
 	port map (
-		clk => clk_100mhz,
+		clk => CLK,												--added, mapping
 		reset => '0',
 		inst_addr => inst_addr,
 		inst_ce => inst_ce,

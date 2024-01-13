@@ -23,8 +23,8 @@
 `default_nettype none
 
 module minimax (
-   input wire clk,
-   input wire reset,
+   input reg clk,
+   input reg reset,
    input wire [15:0] inst,
    output wire inst_ce,
    input wire [31:0] rdata,
